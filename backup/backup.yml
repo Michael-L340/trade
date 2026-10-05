@@ -1,0 +1,77 @@
+# 交易日志每日备份。放到备份仓库的 .github/workflows/backup.yml。
+# 备份仓库 Michael-L340/trade-journal-backup 必须是私有的（backup.mjs 第一步就查，公开就拒绝）。
+name: 每日备份
+
+on:
+  schedule:
+    - cron: '17 18 * * *'   # UTC 18:17 = 北京时间 02:17（和记账的 01:37 错开）
+  workflow_dispatch:
+    inputs:
+      allow_drop:
+        description: '交易笔数比上次少很多（超过 max(3, 5%)）时，确认是自己删的才选 yes'
+        type: choice
+        options: ['no', 'yes']
+        default: 'no'
+
+concurrency:
+  group: tj-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # 只拿最新一次提交，不下载文件内容（blob:none），稀疏检出排除 shots/：
+      # 每天不会把以前备份的截图下载一遍。仓库里已有哪些图，backup.mjs 用 git ls-tree 看（只读目录树）。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/shots/
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 自测
+        run: node --test
+
+      - name: 拉取日志和新截图
+        env:
+          SUPABASE_URL: ${{ secrets.TJ_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.TJ_SUPABASE_KEY }}
+          TJ_EMAIL: ${{ secrets.TJ_EMAIL }}
+          TJ_PASSWORD: ${{ secrets.TJ_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
+          ALLOW_DROP: ${{ inputs.allow_drop || 'no' }}
+        run: node backup.mjs
+
+      - name: 提交（有变化才提交，只添加不删除）
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --sparse --ignore-removal -- journal.json state.json
+          if [ -d shots ]; then git add --sparse --ignore-removal -- shots; fi
+          if git diff --cached --quiet; then
+            echo '没有变化，不提交'
+          else
+            git diff --cached --stat | tail -n 1
+            git commit -q -m "备份 $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
+
+      # 推送成功（或没有变化）之后，才把备份状态写给网站设置页；有缺图时这一步以失败结束。
+      - name: 写备份状态
+        env:
+          SUPABASE_URL: ${{ secrets.TJ_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.TJ_SUPABASE_KEY }}
+          TJ_EMAIL: ${{ secrets.TJ_EMAIL }}
+          TJ_PASSWORD: ${{ secrets.TJ_PASSWORD }}
+        run: node backup.mjs --report
