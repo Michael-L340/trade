@@ -26,12 +26,12 @@
   --accent: #1F4FD1;
   --sel: #E8EEFC;
   --sel-calc: #DDE6FB;
-  --win: #C92F2F;
-  --win-bg: #FBEBEA;
-  --loss: #0B6B53;
-  --loss-bg: #E4F2EC;
-  --warn: #7A4A00;          /* 提醒文字（不用红绿，免得和盈亏混淆） */
-  --warn-bg: #FFF3D6;
+  --win: #1F5FBF;
+  --win-bg: #E7EFFB;
+  --loss: #B4530F;
+  --loss-bg: #FBEEE4;
+  --warn: #5B3E96;          /* 提醒文字（不用蓝橙，免得和盈亏混淆） */
+  --warn-bg: #F1EAF8;
   --font-ui: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-serif: 'Noto Serif SC', 'Songti SC', SimSun, serif;
   --font-num: 'IBM Plex Mono', 'SF Mono', Consolas, Menlo, 'Noto Sans SC', monospace;

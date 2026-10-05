@@ -79,7 +79,7 @@ function setClass(node, cls) {
   if (node.className !== cls) node.className = cls;
 }
 
-/** 红盈绿亏：盈利 ' win'、亏损 ' loss'，其他空串 */
+/** 蓝盈橙亏：盈利 ' win'、亏损 ' loss'，其他空串 */
 function tone(d) {
   return d.outcome === 'win' ? ' win' : d.outcome === 'loss' ? ' loss' : '';
 }
