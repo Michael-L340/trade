@@ -79,6 +79,10 @@ for i in $(seq 1 60); do
   if [[ "$COMMIT" == "$SHA" && "$STATUS" == "built" ]]; then
     break
   fi
+  # 推送有时不会自动触发 Pages 构建（2026-10-05 v0.3.0 就遇到过）：30 秒后还没开始就手动请求一次
+  if [[ "$i" == "3" && "$COMMIT" != "$SHA" ]]; then
+    gh api -X POST "repos/$REPO/pages/builds" >/dev/null || true
+  fi
   if [[ "$COMMIT" == "$SHA" && "$STATUS" == "errored" ]]; then
     echo "Pages 构建失败，去仓库的 Actions 页看看。" >&2
     exit 1
