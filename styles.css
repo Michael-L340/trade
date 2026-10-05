@@ -1,7 +1,7 @@
 /* 交易日志的全部样式（交接文档 7.12）。
    第一部分原样取自用户认可的预览稿 preview/index.html，类名不要改：顶部统计、曲线、表格、单笔详情弹层、提示都用这些类名。
    方向列只显示"多""空"两个字，不用实心块和描边框（2026-10-05 用户要求）。
-   第二部分是这一步新加的：可编辑的格子、行操作菜单、页内确认框、设置页、横幅。
+   第二部分是这一步新加的：可编辑的格子、行操作菜单、页内确认框、设置页、横幅。第三部分是页面骨架，第四部分是截图。
    全部直角，不用圆角、渐变和阴影（弹层除外）；文字和底色的对比度都不低于 4.5:1。
    页面有内容安全策略：HTML 里不写 style=""，动态数值用 element.style 或 SVG 属性设置。 */
 
@@ -230,7 +230,7 @@ button.cell-input { cursor: pointer; white-space: nowrap; overflow: hidden; }
 /* 空行（7.4）：预先显示的默认值是灰色（输入框的占位文字、方向的"多"）；用户打的字照常是深色 */
 .empty-row .cell-input { color: var(--ink); }
 .empty-row .dir { color: var(--ink-3); }
-/* 有截图但这一版还不显示图片时的占位小框 */
+/* 截图功能没接上（mountSheet 没传 opts.shots）时，有截图的格子里的占位小框 */
 .thumb-ph { width: 60px; height: 34px; flex: none; border: 1px solid var(--line-2); background: var(--head); display: block; }
 
 /* ---------- 行号：点开详情；鼠标移上去出现菜单按钮（7.6） ---------- */
@@ -375,3 +375,14 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 /* 页脚：版本号（部署后用来确认看到的是不是新版） */
 .page-foot { max-width: 1440px; margin: 0 auto; padding: 0 24px 24px; }
 @media (max-width: 600px) { .page-foot { padding-inline: 16px; } }
+
+/* ====================================================================
+   四、截图（7.2、7.7、7.8）
+   ==================================================================== */
+
+/* 表格的截图格：第一张的缩略图（60×34，滚动到看得见时才读）加"n 张"；没图是预览稿的虚线框"贴图"（.shot-empty） */
+.thumb-slot { display: block; flex: none; width: 60px; height: 34px; overflow: hidden; border: 1px solid var(--line-2); background: var(--head); }
+.thumb-slot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* 文件不在本机、图片打不开：小框里写两行小字 */
+.thumb-slot.note { display: flex; align-items: center; justify-content: center; border-style: dashed; color: var(--ink-3); font-size: 11px; line-height: 13px; text-align: center; white-space: pre-line; }
+.shot-count { white-space: nowrap; }

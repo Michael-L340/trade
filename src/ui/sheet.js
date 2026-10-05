@@ -8,8 +8,12 @@
 // - 空行（7.4）：第一次在任何一格输入就建一笔交易（createTradeFromEmptyRow），这一行原地变成交易行、
 //   下面再接一行新的空行；正在输入的格子不重建，焦点和光标留在原处。在这一格里按 Esc 会撤掉这一笔、变回空行。
 // - 输入法（7.5）：event.isComposing（或 keyCode 229）时键盘一律不处理；组字过程中不提交、不改写输入框。
-// - 上半部分是不碰 DOM 的纯函数（下一格的计算、输入的解析和提交规则），tests/sheet-keys.test.js 直接测它们；
-//   DOM 只在 mountSheet 里用到，所以这个模块在 Node 里也能 import。
+// - 截图格（7.2、7.8）：传了 opts.shots（main.js 给，见 shotApi）才是真的截图功能。有图显示第一张的缩略图（60×34，
+//   滚动到看得见时才读）加"n 张"，没图是虚线框"贴图"；光标在某一行任意格子里按 Ctrl+V，剪贴板里有图片就加到这一行
+//   （在空行里贴就先按默认值建好这一笔）；剪贴板里是文字照常粘贴，只有收图时才 preventDefault。
+//   缩略图的 Blob 地址不再显示就 release。没传 opts.shots 时保持占位：灰框加"n 张"，粘贴图片只提示一句。
+// - 上半部分是不碰 DOM 的纯函数（下一格的计算、输入的解析和提交规则、截图的小工具），tests/sheet-keys.test.js 直接测它们；
+//   DOM 只在 mountSheet 里用到，所以这个模块在 Node 里也能 import。单笔详情（detail.js）也用这里的截图小工具。
 
 import { sampleHint } from '../calc.js';
 import {
@@ -327,6 +331,214 @@ export function readOnlyMessage(reason) {
 }
 
 // ====================================================================
+// 截图（7.8）：表格和单笔详情共用的小工具（不碰 DOM）
+// ====================================================================
+
+/** 截图标签的显示文字（第 5 节）。空标签在详情里也要能点着切换，所以显示一个"无" */
+export const SHOT_LABEL_TEXT = Object.freeze({ open: '开仓时', close: '平仓后', '': '无' });
+
+/** 标签的显示文字；不认识的当成空标签 */
+export function shotLabelText(label) {
+  return label === 'open' || label === 'close' ? SHOT_LABEL_TEXT[label] : SHOT_LABEL_TEXT[''];
+}
+
+/** 点标签时换成哪个：开仓时 → 平仓后 → 无 → 开仓时 */
+export function nextShotLabel(label) {
+  if (label === 'open') return 'close';
+  if (label === 'close') return '';
+  return 'open';
+}
+
+const nonEmpty = (s) => typeof s === 'string' && s !== '';
+
+/** 缩略图的路径（shots[].thumb）；没有缩略图就用原图；都没有返回 null */
+export function shotThumbPath(shot) {
+  if (!shot) return null;
+  if (nonEmpty(shot.thumb)) return shot.thumb;
+  return nonEmpty(shot.file) ? shot.file : null;
+}
+
+/** 原图的路径（shots[].file）；没有原图就用缩略图；都没有返回 null */
+export function shotFilePath(shot) {
+  if (!shot) return null;
+  if (nonEmpty(shot.file)) return shot.file;
+  return nonEmpty(shot.thumb) ? shot.thumb : null;
+}
+
+const isImageType = (type) => typeof type === 'string' && /^image\//i.test(type);
+
+/**
+ * 从粘贴或拖放的数据（DataTransfer）里取出图片文件，并看看有没有文字。
+ * 要在事件处理函数里同步调用：事件结束后浏览器就不让读了。
+ * 图片先从 items 取（截图工具贴的图在这里），取不到再看 files（从资源管理器复制或拖进来的文件），两边不重复算。
+ * @param {{items?: ArrayLike<{kind: string, type: string, getAsFile?: () => (Blob|null)}>,
+ *   files?: ArrayLike<{type: string}>, types?: ArrayLike<string>}|null|undefined} data
+ * @returns {{images: Blob[], hasText: boolean}}
+ */
+export function readTransfer(data) {
+  const images = [];
+  let hasText = false;
+  if (!data) return { images, hasText };
+  for (const it of Array.from(data.items || [])) {
+    if (!it) continue;
+    if (it.kind === 'file' && isImageType(it.type)) {
+      const f = typeof it.getAsFile === 'function' ? it.getAsFile() : null;
+      if (f) images.push(f);
+    } else if (it.kind === 'string' && it.type === 'text/plain') {
+      hasText = true;
+    }
+  }
+  if (!images.length) {
+    for (const f of Array.from(data.files || [])) if (f && isImageType(f.type)) images.push(f);
+  }
+  if (Array.from(data.types || []).indexOf('text/plain') !== -1) hasText = true;
+  return { images, hasText };
+}
+
+/**
+ * 这次粘贴要不要当成贴截图（9.4：只有剪贴板里有图片时才 preventDefault）。
+ * - 没有图片：不管，照常粘贴；
+ * - 只有图片：贴截图；
+ * - 图片和文字都有（例如从 Excel、Word、网页复制的）：光标在输入框里就按文字粘贴，不在输入框里就贴截图。
+ * @param {{images: Blob[], hasText: boolean}|null} info readTransfer 的结果
+ * @param {boolean} inTextField 焦点在能打字的地方（格子的输入框、详情的文本框）
+ */
+export function pasteWantsImage(info, inTextField) {
+  if (!info || !Array.isArray(info.images) || !info.images.length) return false;
+  return !(inTextField && info.hasText);
+}
+
+/**
+ * 新截图的默认标签（7.8）：这一笔还没出场是 open（开仓时），出场了是 close（平仓后）。
+ * 先问 shots.js 的 defaultLabel。约定里它的参数叫 derived：这里给的对象既有派生值的字段（outcome 等），
+ * 也带着 t（这一笔）、d（派生值）和 result，按哪种写法读都读得到。它没给出 open / close 时按 outcome 自己判断。
+ * @param {Function|null|undefined} defaultLabel
+ * @param {{t?: object, d?: object}|null} it 交易项（derived.tradeById 里的）
+ * @returns {'open'|'close'}
+ */
+export function pickShotLabel(defaultLabel, it) {
+  const t = it && it.t ? it.t : {};
+  const d = it && it.d ? it.d : {};
+  if (typeof defaultLabel === 'function') {
+    let v;
+    try {
+      v = defaultLabel({ ...d, result: t.result, t, d });
+    } catch (err) {
+      v = undefined;
+    }
+    if (v === 'open' || v === 'close') return v;
+  }
+  if (typeof d.outcome === 'string') return d.outcome === 'open' ? 'open' : 'close';
+  return t.result === 'win' || t.result === 'loss' ? 'close' : 'open';
+}
+
+const urlShares = new WeakMap();
+
+/**
+ * 截图地址的共用计数。表格和详情用的是同一个 urlCache（shots.js 的 createUrlCache），同一张缩略图可能两边都在显示，
+ * 要等都不用了才 release（释放 Blob 地址）。这里给每个路径数一数有几处在用：
+ * 第一处 acquire 才调 cache.get，最后一处 release 才调 cache.release；
+ * get 还没回来就都 release 了的，等它回来再放；等的时候又有人要，就接着用、不放。
+ * 同一个 cache 拿到的是同一个计数器。每次 acquire 都要配一次 release。
+ * @param {{get: (path: string) => Promise<string|null>, release?: (path: string) => void}|null|undefined} cache
+ * @returns {{acquire: (path: string) => Promise<string|null>, release: (path: string) => void,
+ *   count: (path: string) => number}|null} acquire 兑现为 Blob 地址；文件不在本机时是 null；读不出来时 reject。
+ */
+export function shotUrls(cache) {
+  if (!cache || typeof cache !== 'object' || typeof cache.get !== 'function') return null;
+  const known = urlShares.get(cache);
+  if (known) return known;
+  const entries = new Map(); // 路径 → { n: 在用的处数, p: cache.get 的结果 }
+  const shared = Object.freeze({
+    acquire(path) {
+      let e = entries.get(path);
+      if (!e) {
+        let p;
+        try {
+          p = Promise.resolve(cache.get(path));
+        } catch (err) {
+          p = Promise.reject(err);
+        }
+        p.catch(() => {}); // 读不出来由用的地方自己处理，这里不算没人接的错误
+        e = { n: 0, p };
+        entries.set(path, e);
+      }
+      e.n += 1;
+      return e.p;
+    },
+    release(path) {
+      const e = entries.get(path);
+      if (!e || e.n <= 0) return;
+      e.n -= 1;
+      if (e.n > 0) return;
+      const done = () => {
+        if (e.n > 0 || entries.get(path) !== e) return; // 等的时候又有人要了
+        entries.delete(path);
+        if (typeof cache.release === 'function') {
+          try {
+            cache.release(path);
+          } catch (err) { /* 释放失败不影响界面 */ }
+        }
+      };
+      e.p.then(done, done);
+    },
+    count(path) {
+      const e = entries.get(path);
+      return e ? e.n : 0;
+    },
+  });
+  urlShares.set(cache, shared);
+  return shared;
+}
+
+const apiShares = new WeakMap();
+let addQueue = Promise.resolve();
+
+/**
+ * 把 main.js 传来的 opts.shots 整理成界面用的样子；表格和详情各调一次，同一个对象拿到的是同一份。
+ * opts.shots = { addShot, deleteShot, setShotLabel, urlCache, defaultLabel }（src/shots.js 的接口）：
+ * - 推荐传已经绑好 ctx 的函数：addShot(tradeId, blob, label) → shot、deleteShot(tradeId, shotId) → 撤销函数、
+ *   setShotLabel(tradeId, shotId, label)；urlCache 是 createUrlCache(ctx) 的结果；defaultLabel 原样；
+ * - 也可以直接传 shots.js 导出的函数，再加一个 ctx 字段（{ store, db, demo }），这里替它把 ctx 放在第一个参数。
+ * 加截图排成一队：一张处理完再处理下一张，几张同时贴进同一笔时不会互相盖掉 shots 数组。
+ * @param {object|null|undefined} raw
+ * @returns {null | {addShot: Function|null, deleteShot: Function|null, setShotLabel: Function|null,
+ *   urls: ReturnType<typeof shotUrls>, labelFor: (it: object) => ('open'|'close')}}
+ */
+export function shotApi(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const known = apiShares.get(raw);
+  if (known) return known;
+  const withCtx = Object.prototype.hasOwnProperty.call(raw, 'ctx');
+  const bind = (fn) => {
+    if (typeof fn !== 'function') return null;
+    return withCtx ? (...args) => fn(raw.ctx, ...args) : (...args) => fn(...args);
+  };
+  const add = bind(raw.addShot);
+  const api = Object.freeze({
+    addShot: add
+      ? (tradeId, blob, label) => {
+        const run = addQueue.then(() => add(tradeId, blob, label));
+        addQueue = run.then(() => undefined, () => undefined);
+        return run;
+      }
+      : null,
+    deleteShot: bind(raw.deleteShot),
+    setShotLabel: bind(raw.setShotLabel),
+    urls: shotUrls(raw.urlCache),
+    labelFor: (it) => pickShotLabel(raw.defaultLabel, it),
+  });
+  apiShares.set(raw, api);
+  return api;
+}
+
+/** 错误 → 给用户看的一句话 */
+export function errorText(err) {
+  if (err && typeof err.message === 'string' && err.message) return err.message;
+  return err === undefined || err === null ? '原因不明' : String(err);
+}
+
+// ====================================================================
 // 表格
 // ====================================================================
 
@@ -338,6 +550,8 @@ export function readOnlyMessage(reason) {
  * @param {(id: string) => void} [opts.openDetail] 点行号或截图格时打开单笔详情（选中行由详情自己 select）
  * @param {() => (void|Promise)} [opts.onLoadDemo] "看看示例数据"按钮的回调；不传就不显示这个按钮。
  *   默认在没有交易、也不在示例模式时显示；main 可以用返回值的 setDemoButton(true/false/null) 自己决定。
+ * @param {object} [opts.shots] 截图功能（main.js 传入）：{ addShot, deleteShot, setShotLabel, urlCache, defaultLabel }，
+ *   怎么传见 shotApi。不传时截图格是占位：灰框加"n 张"，粘贴图片只提示一句。
  * @returns {{focusCell: (id: string, col: string) => boolean, rebuild: () => void,
  *   setDemoButton: (visible: boolean|null) => void, setLoadDemo: (fn: Function|null) => void, destroy: () => void}}
  */
@@ -346,6 +560,7 @@ export function mountSheet(container, store, opts = {}) {
   const doc = container.ownerDocument;
   const win = doc.defaultView || globalThis;
   const openDetail = typeof opts.openDetail === 'function' ? opts.openDetail : null;
+  const shotsApi = shotApi(opts.shots);
   let onLoadDemo = typeof opts.onLoadDemo === 'function' ? opts.onLoadDemo : null;
   let demoOverride = null;
   const ac = new AbortController();
@@ -424,6 +639,7 @@ export function mountSheet(container, store, opts = {}) {
   let promoting = null; // 空行正在变成交易行
   let demoting = null; // 刚在空行建的交易被 Esc 撤掉，变回空行
   let menu = null; // 打开着的行操作菜单
+  let destroyed = false;
 
   const canEdit = () => store.canEdit();
   const ctx = () => ({ currency: store.get().journal.currency, now: new Date() });
@@ -475,16 +691,22 @@ export function mountSheet(container, store, opts = {}) {
 
   function fillShots(view) {
     const c = view.cells.shots;
+    dropThumb(c);
     c.td.textContent = '';
     c.btn = null;
     c.key = null;
+    c.slot = null;
+    c.countEl = null;
+    c.emptyEl = null;
     if (view.kind === 'trade') {
       c.btn = button('shot-btn');
       c.btn.dataset.col = 'shots';
       c.btn.dataset.open = view.id;
       c.td.appendChild(c.btn);
     } else {
-      c.td.appendChild(h('span', 'shot-empty', '贴图'));
+      const empty = h('span', 'shot-empty', '贴图');
+      if (shotsApi) empty.title = '光标放在这一行的格子里按 Ctrl+V 贴图，会先建好这一笔';
+      c.td.appendChild(empty);
     }
   }
 
@@ -663,11 +885,60 @@ export function mountSheet(container, store, opts = {}) {
     renderShots(c.shots, t, no);
   }
 
+  // ---------- 截图格（7.2、7.8） ----------
+  // c 是 view.cells.shots：{ td, btn, key, slot（60×34 的小框）, countEl（"n 张"）, emptyEl（"贴图"）,
+  //   thumbPath（小框该显示的缩略图）, thumbHeld（已经向 urlCache 要了这张、用完要 release） }
+  let thumbObserver = null;
+  const watching = new Map(); // 等着滚动到看得见的小框 → 它所在的截图格
+
   function renderShots(c, t, no) {
-    const count = Array.isArray(t.shots) ? t.shots.length : 0;
-    const key = count + '|' + no;
+    const list = Array.isArray(t.shots) ? t.shots : [];
+    const count = list.length;
+    const path = count ? shotThumbPath(list[0]) : null;
+    const key = count + '|' + no + '|' + (path || '');
     if (c.key === key) return;
     c.key = key;
+    if (!shotsApi) {
+      placeholderShots(c, count, no);
+      return;
+    }
+    if (!count) {
+      dropThumb(c);
+      if (!c.emptyEl) {
+        c.btn.textContent = '';
+        c.slot = null;
+        c.countEl = null;
+        c.emptyEl = h('span', 'shot-empty', '贴图');
+        c.btn.appendChild(c.emptyEl);
+      }
+      c.btn.setAttribute('aria-label', `第 ${no} 笔：还没有截图，打开详情`);
+      c.btn.title = '还没有截图：光标放在这一行任意格子里按 Ctrl+V 就能贴上，或点开详情';
+      return;
+    }
+    if (!c.slot) {
+      dropThumb(c);
+      c.btn.textContent = '';
+      c.emptyEl = null;
+      c.slot = h('span', 'thumb-slot');
+      c.slot.setAttribute('aria-hidden', 'true');
+      c.countEl = h('span', 'shot-count');
+      c.btn.append(c.slot, c.countEl);
+    }
+    setText(c.countEl, count + ' 张');
+    c.btn.setAttribute('aria-label', `第 ${no} 笔的 ${count} 张截图：打开详情`);
+    c.btn.removeAttribute('title');
+    if (c.thumbPath !== path) {
+      dropThumb(c);
+      c.slot.className = 'thumb-slot';
+      c.slot.textContent = '';
+      c.slot.removeAttribute('title');
+      c.thumbPath = path;
+      if (path) watchThumb(c);
+    }
+  }
+
+  /** 没传 opts.shots 时的占位（截图功能接上之前的样子） */
+  function placeholderShots(c, count, no) {
     c.btn.textContent = '';
     if (count) {
       c.btn.append(h('span', 'thumb-ph'), h('span', null, count + ' 张'));
@@ -678,6 +949,78 @@ export function mountSheet(container, store, opts = {}) {
       c.btn.setAttribute('aria-label', `第 ${no} 笔：打开详情`);
       c.btn.title = '截图功能下一版加上，现在点开是单笔详情';
     }
+  }
+
+  /** 小框滚动到看得见（上下各提前 200px）时才去读缩略图；浏览器没有 IntersectionObserver 就直接读 */
+  function watchThumb(c) {
+    if (!shotsApi || !shotsApi.urls || !c.slot) return; // 没有 urlCache：只显示灰色小框
+    const IO = win.IntersectionObserver;
+    if (typeof IO !== 'function') {
+      loadThumb(c);
+      return;
+    }
+    if (!thumbObserver) thumbObserver = new IO(onThumbsVisible, { rootMargin: '200px 0px' });
+    watching.set(c.slot, c);
+    thumbObserver.observe(c.slot);
+  }
+
+  function onThumbsVisible(entries) {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      const c = watching.get(en.target);
+      watching.delete(en.target);
+      if (thumbObserver) thumbObserver.unobserve(en.target);
+      if (c && c.slot === en.target) loadThumb(c);
+    }
+  }
+
+  function loadThumb(c) {
+    const path = c.thumbPath;
+    const slot = c.slot;
+    if (!path || !slot || c.thumbHeld || !shotsApi || !shotsApi.urls) return;
+    c.thumbHeld = true;
+    const current = () => !destroyed && c.thumbPath === path && c.slot === slot;
+    shotsApi.urls.acquire(path).then((url) => {
+      if (!current()) return; // 已经换了图或拆掉了（那时已经 release 过）
+      if (!url) {
+        slotNote(slot, 'missing', '文件不在\n本机', '这一笔第一张截图的文件不在这个浏览器里');
+        return;
+      }
+      const img = doc.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.addEventListener('error', () => {
+        if (current()) slotNote(slot, 'broken', '打不开', '这张缩略图打不开');
+      }, { once: true });
+      img.src = url;
+      slot.className = 'thumb-slot';
+      slot.textContent = '';
+      slot.appendChild(img);
+    }, (err) => {
+      if (current()) slotNote(slot, 'broken', '读不出', '读不出这张缩略图：' + errorText(err));
+    });
+  }
+
+  function slotNote(slot, kind, text, title) {
+    slot.className = 'thumb-slot note ' + kind;
+    slot.textContent = text;
+    slot.title = title;
+  }
+
+  /** 这一格不再显示原来那张缩略图：不再等它变得看得见；已经要过地址的 release 掉 */
+  function dropThumb(c) {
+    if (!c) return;
+    if (c.slot && watching.has(c.slot)) {
+      watching.delete(c.slot);
+      if (thumbObserver) thumbObserver.unobserve(c.slot);
+    }
+    if (c.thumbHeld && c.thumbPath && shotsApi && shotsApi.urls) shotsApi.urls.release(c.thumbPath);
+    c.thumbHeld = false;
+    c.thumbPath = null;
+  }
+
+  function releaseView(v) {
+    if (v && v.kind !== 'system' && v.cells && v.cells.shots) dropThumb(v.cells.shots);
   }
 
   function renderEmpty(view, st) {
@@ -802,6 +1145,7 @@ export function mountSheet(container, store, opts = {}) {
     const ids = new Set(rows.map((r) => r.id));
     for (const [id, v] of Array.from(views)) {
       if (!ids.has(id)) {
+        releaseView(v);
         v.tr.remove();
         views.delete(id);
       }
@@ -810,6 +1154,7 @@ export function mountSheet(container, store, opts = {}) {
     for (const row of rows) {
       let v = views.get(row.id);
       if (v && v.kind !== row.type) {
+        releaseView(v);
         v.tr.remove();
         views.delete(row.id);
         v = null;
@@ -885,6 +1230,8 @@ export function mountSheet(container, store, opts = {}) {
     composing.clear();
     promoting = null;
     demoting = null;
+    for (const v of views.values()) releaseView(v);
+    releaseView(emptyView);
     tbody.textContent = '';
     views.clear();
     emptyView = null;
@@ -1447,6 +1794,107 @@ export function mountSheet(container, store, opts = {}) {
     });
   }
 
+  // ---------- 贴截图（7.8） ----------
+  function isTypingTarget(el) {
+    if (!el || el.nodeType !== 1) return false;
+    return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
+  /** 没传 opts.shots 时：剪贴板里只有图片就提示一句（不收）；有文字照常粘贴 */
+  function placeholderPaste(e) {
+    const items = e.clipboardData && e.clipboardData.items ? Array.from(e.clipboardData.items) : [];
+    const hasImage = items.some((it) => it.kind === 'file' && /^image\//.test(it.type));
+    const hasText = items.some((it) => it.kind === 'string' && it.type === 'text/plain');
+    if (hasImage && !hasText) {
+      e.preventDefault();
+      showToast('截图功能下一版加上，现在还不能把截图贴进表格');
+    }
+  }
+
+  function onPaste(e) {
+    if (e.defaultPrevented) return;
+    const view = viewOf(e.target);
+    if (!view) return;
+    if (!shotsApi) {
+      placeholderPaste(e);
+      return;
+    }
+    const info = readTransfer(e.clipboardData);
+    if (!pasteWantsImage(info, isTypingTarget(e.target))) return; // 文字照常粘贴
+    e.preventDefault();
+    pasteShots(view, info.images);
+  }
+
+  function pasteShots(view, images) {
+    if (!canEdit()) {
+      notifyReadOnly();
+      return;
+    }
+    if (!shotsApi.addShot) {
+      showToast('现在还不能贴截图');
+      return;
+    }
+    if (view.kind === 'system') {
+      showToast('系统行不能贴图：把光标放到一笔交易的格子里，再按 Ctrl+V');
+      return;
+    }
+    let id = view.kind === 'trade' ? view.id : null;
+    let created = null;
+    if (view.kind === 'empty') {
+      id = createFromEmpty(view, {}); // 和在空行里打字一样：先按默认值建好这一笔
+      if (!id) return;
+      const it = store.get().derived.tradeById.get(id);
+      created = it ? it.t : null;
+    }
+    if (id) addShotsTo(id, images, created);
+  }
+
+  /** 一张一张加；都没加上、而这一笔是刚为贴图新建的、之后也没人动过，就把它撤掉 */
+  async function addShotsTo(id, images, created) {
+    showToast(images.length > 1 ? `正在处理 ${images.length} 张截图…` : '正在处理截图…');
+    let added = 0;
+    let label = 'open';
+    let failure = null;
+    for (const blob of images) {
+      const it = store.get().derived.tradeById.get(id);
+      if (!it) {
+        failure = failure || new Error('这一笔已经删掉了');
+        break;
+      }
+      label = shotsApi.labelFor(it);
+      try {
+        const shot = await shotsApi.addShot(id, blob, label);
+        if (shot) added += 1;
+        else failure = failure || new Error('没有加上');
+      } catch (err) {
+        failure = failure || err;
+      }
+    }
+    if (destroyed) return;
+    const it = store.get().derived.tradeById.get(id);
+    if (!added) {
+      if (created && it && it.t === created) dropCreated(id);
+      showToast('截图没加上：' + errorText(failure));
+      return;
+    }
+    let msg = it
+      ? `${created ? `新建了第 ${it.no} 笔，` : `第 ${it.no} 笔`}加了 ${added} 张截图（${shotLabelText(label)}）`
+      : `加了 ${added} 张截图`;
+    if (failure) msg += `；另有 ${images.length - added} 张没加上：${errorText(failure)}`;
+    showToast(msg);
+  }
+
+  /** 撤掉为贴图新建、却没贴上图的那一笔；它是最后一笔时原地变回空行，焦点不丢 */
+  function dropCreated(id) {
+    const v = views.get(id);
+    if (v && emptyView && v.tr.nextElementSibling === emptyView.tr) demoting = v;
+    try {
+      store.actions.deleteTrade(id);
+    } finally {
+      demoting = null;
+    }
+  }
+
   // ---------- 接上事件 ----------
   listen(tbody, 'focusin', onFocusIn);
   listen(tbody, 'focusout', onFocusOut);
@@ -1463,16 +1911,8 @@ export function mountSheet(container, store, opts = {}) {
   listen(tbody, 'keydown', onKeyDown);
   listen(tbody, 'click', onClick);
   listen(tbody, 'contextmenu', onContextMenu);
-  // 截图（7.8）是下一步的功能：剪贴板里只有图片时先提示一句；有文字时照常粘贴，不拦截
-  listen(tbody, 'paste', (e) => {
-    const items = e.clipboardData && e.clipboardData.items ? Array.from(e.clipboardData.items) : [];
-    const hasImage = items.some((it) => it.kind === 'file' && /^image\//.test(it.type));
-    const hasText = items.some((it) => it.kind === 'string' && it.type === 'text/plain');
-    if (hasImage && !hasText) {
-      e.preventDefault();
-      showToast('截图功能下一版加上，现在还不能把截图贴进表格');
-    }
-  });
+  // 截图（7.8）：光标在某一行的任意格子里按 Ctrl+V，剪贴板里有图片就加到这一行；是文字照常粘贴，不拦截
+  listen(tbody, 'paste', onPaste);
   listen(addBtn, 'click', addSystem);
   listen(demoBtn, 'click', () => {
     if (!onLoadDemo) return;
@@ -1505,11 +1945,16 @@ export function mountSheet(container, store, opts = {}) {
       refreshFooter();
     },
     destroy() {
+      destroyed = true;
       off();
       closeMenu(false);
       ac.abort();
       edit = null;
       composing.clear();
+      for (const v of views.values()) releaseView(v);
+      if (thumbObserver) thumbObserver.disconnect();
+      thumbObserver = null;
+      watching.clear();
       views.clear();
       emptyView = null;
       container.textContent = '';

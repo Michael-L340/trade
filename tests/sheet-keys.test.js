@@ -1,12 +1,13 @@
-// 交易表的纯逻辑（src/ui/sheet.js 上半部分）：键盘移动的下一格、按键含义、输入的解析和提交规则、格子显示。
-// 不碰 DOM。
+// 交易表的纯逻辑（src/ui/sheet.js 上半部分）：键盘移动的下一格、按键含义、输入的解析和提交规则、格子显示，
+// 以及表格和详情共用的截图小工具（标签、路径、剪贴板、默认标签、地址计数、shotApi）。不碰 DOM。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   COLUMNS, NAV_COLUMNS, NEWLINE_MARK, nextCell, keyAction, resultForKey, isComposingKey, interpretInput, liveValue,
   emptyRowPatch, toCellText, fromCellText, tradeCellText, missingFlags, outcomeChip, headerLabel, segmentHint,
-  readOnlyMessage,
+  readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
+  pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText,
 } from '../src/ui/sheet.js';
 import { deriveJournal, deriveTrade } from '../src/calc.js';
 
@@ -311,4 +312,236 @@ test('结果格标签、表头、样本提示、只读说明', () => {
 
   assert.match(readOnlyMessage('other-tab'), /另一个标签页/);
   assert.match(readOnlyMessage('newer-schema'), /刷新/);
+});
+
+// ---------- 截图（7.8）：表格和详情共用的小工具 ----------
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('截图标签：显示文字，点一下换成哪个（开仓时 → 平仓后 → 无 → 开仓时）', () => {
+  assert.deepEqual(Object.keys(SHOT_LABEL_TEXT).sort(), ['', 'close', 'open']);
+  assert.equal(shotLabelText('open'), '开仓时');
+  assert.equal(shotLabelText('close'), '平仓后');
+  assert.equal(shotLabelText(''), '无');
+  assert.equal(shotLabelText(undefined), '无', '不认识的当成空标签');
+  assert.equal(nextShotLabel('open'), 'close');
+  assert.equal(nextShotLabel('close'), '');
+  assert.equal(nextShotLabel(''), 'open');
+  assert.equal(nextShotLabel('nope'), 'open');
+  for (const l of ['open', 'close', '']) assert.equal(nextShotLabel(nextShotLabel(nextShotLabel(l))), l, '点三下回到原样');
+});
+
+test('截图路径：缩略图优先 thumb、原图优先 file，缺了一个就用另一个', () => {
+  const shot = { id: 'sh_1', file: 'shots/t_1/sh_1.webp', thumb: 'shots/t_1/sh_1.thumb.webp' };
+  assert.equal(shotThumbPath(shot), 'shots/t_1/sh_1.thumb.webp');
+  assert.equal(shotFilePath(shot), 'shots/t_1/sh_1.webp');
+  assert.equal(shotThumbPath({ file: 'shots/t_1/sh_2.jpg' }), 'shots/t_1/sh_2.jpg');
+  assert.equal(shotThumbPath({ file: 'shots/t_1/sh_2.jpg', thumb: '' }), 'shots/t_1/sh_2.jpg');
+  assert.equal(shotFilePath({ thumb: 'shots/t_1/sh_3.thumb.jpg' }), 'shots/t_1/sh_3.thumb.jpg');
+  assert.equal(shotThumbPath({}), null);
+  assert.equal(shotFilePath(null), null);
+});
+
+/** 假的剪贴板条目 */
+const fileItem = (type) => {
+  const file = { type, name: 'x' };
+  return { kind: 'file', type, file, getAsFile: () => file };
+};
+const stringItem = (type) => ({ kind: 'string', type, getAsFile: () => null });
+
+test('读剪贴板 / 拖放：截图工具贴的图、资源管理器复制的文件、文字', () => {
+  const shot = fileItem('image/png');
+  assert.deepEqual(readTransfer({ items: [shot], files: [shot.file], types: ['Files'] }),
+    { images: [shot.file], hasText: false }, 'items 和 files 里是同一张，只算一次');
+  assert.deepEqual(readTransfer({ items: [stringItem('text/plain'), stringItem('text/html')], files: [], types: ['text/plain', 'text/html'] }),
+    { images: [], hasText: true });
+  const a = { type: 'image/jpeg', name: 'a.jpg' };
+  const b = { type: 'application/pdf', name: 'b.pdf' };
+  const c = { type: 'image/webp', name: 'c.webp' };
+  assert.deepEqual(readTransfer({ items: [], files: [a, b, c], types: ['Files'] }).images, [a, c], '只要图片，顺序不变');
+  const bmp = fileItem('image/png'); // Excel 复制格子：文字、HTML 和一张位图都有
+  assert.deepEqual(readTransfer({ items: [stringItem('text/plain'), stringItem('text/html'), bmp], types: ['text/plain', 'text/html', 'Files'] }),
+    { images: [bmp.file], hasText: true });
+  assert.equal(readTransfer({ types: ['text/plain'] }).hasText, true, '只看 types 也认文字');
+  assert.deepEqual(readTransfer({ items: [{ kind: 'file', type: 'image/png', getAsFile: () => null }] }).images, [], '取不到文件不算');
+  assert.deepEqual(readTransfer(null), { images: [], hasText: false });
+});
+
+test('粘贴：只有剪贴板里有图片才贴截图（才 preventDefault）；图文都有、光标在输入框里时按文字粘贴', () => {
+  const img = { images: [{}], hasText: false };
+  const both = { images: [{}], hasText: true };
+  const text = { images: [], hasText: true };
+  assert.equal(pasteWantsImage(img, true), true, '只有图片：光标在格子里也贴截图');
+  assert.equal(pasteWantsImage(img, false), true);
+  assert.equal(pasteWantsImage(text, true), false, '文字：照常粘贴，不拦截');
+  assert.equal(pasteWantsImage(text, false), false);
+  assert.equal(pasteWantsImage(both, true), false, '图文都有、光标在输入框里：按文字');
+  assert.equal(pasteWantsImage(both, false), true, '图文都有、焦点在按钮上：贴截图');
+  assert.equal(pasteWantsImage({ images: [], hasText: false }, false), false);
+  assert.equal(pasteWantsImage(null, false), false);
+});
+
+test('新截图的默认标签：没出场是开仓时，出场了是平仓后；defaultLabel 按哪种写法读参数都行', () => {
+  const { tradeById } = deriveJournal(sample.rows);
+  const open = tradeById.get('t_16'); // 持仓中
+  const win = tradeById.get('t_01');
+  assert.equal(pickShotLabel(null, open), 'open');
+  assert.equal(pickShotLabel(null, win), 'close');
+  const t = { rr: null, risk: 100, result: 'win', pnlOverride: null };
+  assert.equal(pickShotLabel(undefined, { t, d: deriveTrade(t) }), 'close', '缺数但已经选了结果：算出场');
+  const readers = {
+    outcome: (x) => (x.outcome === 'open' ? 'open' : 'close'),
+    nested: (x) => (x.d.outcome === 'open' ? 'open' : 'close'),
+    trade: (x) => (x.t.result ? 'close' : 'open'),
+    result: (x) => (x.result ? 'close' : 'open'),
+  };
+  for (const [name, fn] of Object.entries(readers)) {
+    assert.equal(pickShotLabel(fn, open), 'open', name);
+    assert.equal(pickShotLabel(fn, win), 'close', name);
+  }
+  assert.equal(pickShotLabel(() => 'close', open), 'close', '以 defaultLabel 为准');
+  assert.equal(pickShotLabel(() => { throw new Error('x'); }, win), 'close', '它出错就自己判断');
+  assert.equal(pickShotLabel(() => '平仓后', open), 'open', '给的不是 open / close 也自己判断');
+  assert.equal(pickShotLabel(null, { t: { result: 'loss' } }), 'close', '没有派生值时看 result');
+  assert.equal(pickShotLabel(null, null), 'open');
+});
+
+/** 假的 urlCache：记下 get 和 release；manual 时 get 要手动兑现 */
+function fakeUrlCache({ missing = [], broken = [], manual = false } = {}) {
+  const log = [];
+  const waiting = [];
+  return {
+    log,
+    waiting,
+    get(path) {
+      log.push('get ' + path);
+      if (broken.includes(path)) return Promise.reject(new Error('读不出 ' + path));
+      const value = missing.includes(path) ? null : 'blob:' + path;
+      if (!manual) return Promise.resolve(value);
+      return new Promise((resolve) => waiting.push(() => resolve(value)));
+    },
+    release(path) { log.push('release ' + path); },
+  };
+}
+
+test('截图地址：同一张两处在用，两处都放了才 release；同一个 cache 共用一个计数器', async () => {
+  const cache = fakeUrlCache();
+  const urls = shotUrls(cache);
+  assert.equal(shotUrls(cache), urls, '表格和详情拿到的是同一个');
+  assert.equal(await urls.acquire('a.thumb.webp'), 'blob:a.thumb.webp');
+  assert.equal(await urls.acquire('a.thumb.webp'), 'blob:a.thumb.webp');
+  assert.deepEqual(cache.log, ['get a.thumb.webp'], '第二处不再 get');
+  assert.equal(urls.count('a.thumb.webp'), 2);
+  urls.release('a.thumb.webp');
+  await tick();
+  assert.deepEqual(cache.log, ['get a.thumb.webp'], '还有一处在用，不放');
+  urls.release('a.thumb.webp');
+  await tick();
+  assert.deepEqual(cache.log, ['get a.thumb.webp', 'release a.thumb.webp']);
+  urls.release('a.thumb.webp');
+  urls.release('never.webp');
+  await tick();
+  assert.equal(cache.log.length, 2, '多放、放没要过的，都不出事');
+  assert.equal(await urls.acquire('a.thumb.webp'), 'blob:a.thumb.webp');
+  assert.deepEqual(cache.log.slice(2), ['get a.thumb.webp'], '放掉以后再要，重新 get');
+});
+
+test('截图地址：get 还没回来就都放了，等它回来再 release；等的时候又有人要，就接着用', async () => {
+  const cache = fakeUrlCache({ manual: true });
+  const urls = shotUrls(cache);
+  const p1 = urls.acquire('b.webp');
+  urls.release('b.webp');
+  await tick();
+  assert.deepEqual(cache.log, ['get b.webp'], '还没回来，先不放');
+  cache.waiting.shift()();
+  assert.equal(await p1, 'blob:b.webp');
+  await tick();
+  assert.deepEqual(cache.log, ['get b.webp', 'release b.webp']);
+
+  const p2 = urls.acquire('c.webp');
+  urls.release('c.webp');
+  const p3 = urls.acquire('c.webp'); // 回来之前又要了
+  cache.waiting.shift()();
+  assert.equal(await p2, 'blob:c.webp');
+  assert.equal(await p3, 'blob:c.webp');
+  await tick();
+  assert.deepEqual(cache.log.slice(2), ['get c.webp'], '又有人在用：不放，也不重新 get');
+  urls.release('c.webp');
+  await tick();
+  assert.deepEqual(cache.log.slice(2), ['get c.webp', 'release c.webp']);
+});
+
+test('截图地址：文件不在本机是 null，读不出来是 reject，两种都照常 release', async () => {
+  const cache = fakeUrlCache({ missing: ['gone.webp'], broken: ['bad.webp'] });
+  const urls = shotUrls(cache);
+  assert.equal(await urls.acquire('gone.webp'), null);
+  await assert.rejects(urls.acquire('bad.webp'), /读不出 bad\.webp/);
+  urls.release('gone.webp');
+  urls.release('bad.webp');
+  await tick();
+  assert.deepEqual(cache.log, ['get gone.webp', 'get bad.webp', 'release gone.webp', 'release bad.webp']);
+  assert.equal(shotUrls(null), null);
+  assert.equal(shotUrls({}), null, '没有 get 的不算 urlCache');
+});
+
+test('shotApi：没传是 null；可以传绑好 ctx 的函数，也可以传 shots.js 的原始函数加 ctx', async () => {
+  assert.equal(shotApi(undefined), null);
+  assert.equal(shotApi(null), null);
+  const calls = [];
+  const bound = {
+    addShot: async (...a) => { calls.push(['add', ...a]); return { id: 'sh_1' }; },
+    deleteShot: async (...a) => { calls.push(['delete', ...a]); return () => true; },
+    setShotLabel: (...a) => { calls.push(['label', ...a]); return true; },
+  };
+  const api = shotApi(bound);
+  assert.equal(shotApi(bound), api, '同一个对象拿到同一份（表格和详情共用一个队列）');
+  assert.equal(api.urls, null, '没有 urlCache');
+  assert.deepEqual(await api.addShot('t_1', 'blob', 'open'), { id: 'sh_1' });
+  assert.equal(typeof await api.deleteShot('t_1', 'sh_1'), 'function');
+  assert.equal(api.setShotLabel('t_1', 'sh_1', 'close'), true);
+  assert.deepEqual(calls, [['add', 't_1', 'blob', 'open'], ['delete', 't_1', 'sh_1'], ['label', 't_1', 'sh_1', 'close']]);
+
+  const ctx = { store: 'S', db: 'D', demo: false };
+  const seen = [];
+  const cache = fakeUrlCache();
+  const raw = shotApi({ ctx, setShotLabel: (...a) => { seen.push(a); return true; }, defaultLabel: () => 'close', urlCache: cache });
+  raw.setShotLabel('t_2', 'sh_2', '');
+  assert.deepEqual(seen, [[ctx, 't_2', 'sh_2', '']], 'ctx 放在第一个参数');
+  assert.equal(raw.addShot, null, '没给的函数是 null');
+  assert.equal(raw.deleteShot, null);
+  assert.equal(raw.urls, shotUrls(cache), 'urlCache 套上共用计数');
+  assert.equal(raw.labelFor({ t: { result: null }, d: { outcome: 'open' } }), 'close', '用传进来的 defaultLabel');
+});
+
+test('shotApi：加截图排队，一张处理完才开始下一张；前一张失败不挡后面的', async () => {
+  const order = [];
+  const gates = [];
+  const api = shotApi({
+    addShot: (tradeId, blob) => {
+      order.push('start ' + blob);
+      return new Promise((resolve, reject) => gates.push({ resolve, reject }));
+    },
+  });
+  const a = api.addShot('t_1', 'A', 'open');
+  const b = api.addShot('t_1', 'B', 'open');
+  const c = api.addShot('t_2', 'C', 'close');
+  await tick();
+  assert.deepEqual(order, ['start A'], 'B 要等 A 处理完');
+  gates.shift().reject(new Error('A 坏了'));
+  await assert.rejects(a, /A 坏了/);
+  await tick();
+  assert.deepEqual(order, ['start A', 'start B']);
+  gates.shift().resolve({ id: 'sh_b' });
+  assert.deepEqual(await b, { id: 'sh_b' });
+  await tick();
+  assert.deepEqual(order, ['start A', 'start B', 'start C']);
+  gates.shift().resolve({ id: 'sh_c' });
+  assert.deepEqual(await c, { id: 'sh_c' });
+});
+
+test('错误说明', () => {
+  assert.equal(errorText(new Error('图片解码失败')), '图片解码失败');
+  assert.equal(errorText('空间不够'), '空间不够');
+  assert.equal(errorText(undefined), '原因不明');
+  assert.equal(errorText(new Error('')), 'Error');
 });
