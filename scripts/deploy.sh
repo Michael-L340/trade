@@ -83,6 +83,16 @@ for i in $(seq 1 60); do
   if [[ "$i" == "3" && "$COMMIT" != "$SHA" ]]; then
     gh api -X POST "repos/$REPO/pages/builds" >/dev/null || true
   fi
+  # 构建任务有时一直排队不开始（2026-10-05 v0.3.2、v0.3.5 都卡过）：3 分钟还没好就取消，重新请求一次
+  if [[ "$i" == "18" && "$STATUS" != "built" ]]; then
+    RUN="$(gh run list -R "$REPO" --limit 1 --json databaseId,status --jq '.[0] | select(.status == "queued" or .status == "waiting") | .databaseId')"
+    if [[ -n "$RUN" ]]; then
+      echo "Pages 构建排队 3 分钟没开始，取消后重新请求"
+      gh run cancel "$RUN" -R "$REPO" >/dev/null || true
+      sleep 8
+      gh api -X POST "repos/$REPO/pages/builds" >/dev/null || true
+    fi
+  fi
   if [[ "$COMMIT" == "$SHA" && "$STATUS" == "errored" ]]; then
     echo "Pages 构建失败，去仓库的 Actions 页看看。" >&2
     exit 1
