@@ -17,8 +17,9 @@
 
 import { sampleHint } from '../calc.js';
 import {
-  fmtDirection, fmtMoney, fmtPct, fmtR, fmtRR, fmtTwo, OUTCOME_LABEL, parseDate, parseNumber,
+  fmtDirection, fmtMoney, fmtPct, fmtR, fmtRR, fmtTwo, OUTCOME_LABEL, parseDate, parseNumber, todayLocal,
 } from '../format.js';
+import { symbolOptions } from '../symbols.js';
 import { confirmDialog, showToast } from './toast.js';
 
 // ====================================================================
@@ -628,6 +629,20 @@ export function mountSheet(container, store, opts = {}) {
   hint.setAttribute('role', 'status');
   footer.append(addBtn, demoBtn, hint);
   container.append(scroll, footer);
+  // 品种的候选项（用过的品种，按近 30 天使用次数排序），点品种格时浏览器会列出来直接选
+  const symbolListId = 'tj-symbols-' + Math.random().toString(36).slice(2, 8);
+  const symbolList = doc.createElement('datalist');
+  symbolList.id = symbolListId;
+  container.appendChild(symbolList);
+  let symbolKey = '';
+  function refreshSymbols() {
+    const opts = symbolOptions(store.get().journal.rows, todayLocal(new Date()));
+    const key = opts.join('\u0001');
+    if (key === symbolKey) return;
+    symbolKey = key;
+    symbolList.textContent = '';
+    for (const sym of opts) { const o = doc.createElement('option'); o.value = sym; symbolList.appendChild(o); }
+  }
 
   // ---------- 状态 ----------
   /** 行 id → view。view = { kind: 'trade'|'empty'|'system', id, tr, cells } */
@@ -654,6 +669,7 @@ export function mountSheet(container, store, opts = {}) {
     input.dataset.col = col;
     input.setAttribute('autocomplete', 'off');
     input.spellcheck = false;
+    if (col === 'symbol') input.setAttribute('list', symbolListId);
     td.appendChild(input);
     return { td, input };
   }
@@ -1285,8 +1301,10 @@ export function mountSheet(container, store, opts = {}) {
     }
   }
 
+  refreshSymbols();
   const off = store.subscribe((ev) => {
     if (!ev) return;
+    if (ev.type !== 'ui') refreshSymbols();
     if (ev.type === 'journal') rebuild();
     else if (ev.type === 'rows') onRows(ev);
     else if (ev.type === 'row') onRow(ev);

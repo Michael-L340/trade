@@ -460,3 +460,10 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .sheet td:has(> [data-col="direction"]), .sheet td:has(> [data-col="result"]), .sheet td:has(> [data-col="shots"]) { text-align: center; }
 .sheet [data-col="shots"].shot-btn, .sheet .shot-btn[data-col="shots"] { justify-content: center; }
 .sheet td > .shot-empty, .sheet .shot-btn > .shot-empty { margin: 0 auto; }
+
+/* 盈亏格有"改"标记时左右留一样的空，数字仍然居中 */
+.sheet td.has-tag .cell-input[data-col="pnl"] { padding-left: 36px; padding-right: 36px; }
+/* 表头全部居中 */
+.sheet th, .sheet th.r { text-align: center; }
+/* 品种格用了候选列表，隐藏 Chrome 自带的下拉三角，保持格子干净 */
+.cell-input[list]::-webkit-calendar-picker-indicator { display: none !important; }
