@@ -137,6 +137,35 @@ test('meta 和 files 仓库', async () => {
   await db.close();
 });
 
+test('files 仓库：putFiles 一个事务写几个文件（要么全写、要么都不写），deleteFiles 一次删几个；Blob 带类型存取；只读时拒绝', async () => {
+  for (const indexedDB of [createFakeIndexedDB(), null]) {
+    const db = await openLocalDb({ indexedDB, ...quiet });
+    const file = 'shots/t_1/sh_1.webp';
+    const thumb = 'shots/t_1/sh_1.thumb.webp';
+    const rec = (text) => ({ blob: new Blob([text], { type: 'image/webp' }), type: 'image/webp', bytes: text.length, uploaded: false });
+    await db.putFiles([[file, rec('大图')], [thumb, rec('小')]]);
+    assert.deepEqual((await db.listFiles()).sort(), [thumb, file].sort(), db.kind);
+    const back = await db.getFile(file);
+    assert.ok(back.blob instanceof Blob);
+    assert.equal(back.blob.type, 'image/webp', '取回的 Blob 保留类型');
+    assert.equal(await back.blob.text(), '大图');
+    assert.equal(back.uploaded, false);
+
+    // 有一条存不了（函数不能复制）：整批都不写，报 StorageError
+    await assert.rejects(db.putFiles([['shots/t_1/a.webp', rec('a')], ['shots/t_1/b.webp', { blob: () => 1 }]]), (e) => e instanceof StorageError && e.code === 'IDB');
+    assert.equal(await db.getFile('shots/t_1/a.webp'), null, '同一批里能存的那条也没写');
+
+    await db.deleteFiles([file, thumb, 'shots/没有这个.webp']);
+    assert.deepEqual(await db.listFiles(), []);
+
+    db.setWritable(false);
+    await assert.rejects(db.putFiles([[file, rec('x')]]), (e) => e.code === 'READ_ONLY');
+    await assert.rejects(db.deleteFiles([file]), (e) => e.code === 'READ_ONLY');
+    assert.deepEqual(await db.listFiles(), []);
+    await db.close();
+  }
+});
+
 test('写入失败时报错，之后的保存照常', async () => {
   const db = await openLocalDb({ indexedDB: createFakeIndexedDB(), delay: 5, ...quiet });
   const bad = { ...tiny(1), oops: () => 1 }; // 函数复制不了

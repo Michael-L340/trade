@@ -105,8 +105,15 @@ function idbBackend(db) {
     put(store, key, value) {
       return backend.write(store, (os) => { os.put(value, key); });
     },
+    /** 一个事务写多条：要么全写进去，要么一条都不写 */
+    putMany(store, entries) {
+      return backend.write(store, (os) => { for (const [key, value] of entries) os.put(value, key); });
+    },
     delete(store, key) {
       return backend.write(store, (os) => { os.delete(key); });
+    },
+    deleteMany(store, keys) {
+      return backend.write(store, (os) => { for (const key of keys) os.delete(key); });
     },
     write(store, fn) {
       return new Promise((resolve, reject) => {
@@ -173,7 +180,12 @@ function memoryBackend() {
     async get(store, key) { return copy(data.get(store).get(key)); },
     async keys(store) { return Array.from(data.get(store).keys()); },
     async put(store, key, value) { data.get(store).set(key, copy(value)); },
+    async putMany(store, entries) {
+      const copies = entries.map(([key, value]) => [key, copy(value)]); // 先全部复制：有一条复制不了就都不写
+      for (const [key, value] of copies) data.get(store).set(key, value);
+    },
     async delete(store, key) { data.get(store).delete(key); },
+    async deleteMany(store, keys) { for (const key of keys) data.get(store).delete(key); },
     async writeJournal(journal) {
       const stored = data.get(STORES.journal).get(JOURNAL_KEY);
       if (isNewer(stored)) throw newerSchemaError(stored.schemaVersion);
@@ -296,7 +308,7 @@ function createLocalDb(backend, opts) {
     /** 有没有还没写的修改 */
     hasPending: () => pending !== null,
 
-    /** 设为可写或只读（只读时 saveJournal、saveMeta、putFile、deleteFile 都会拒绝） */
+    /** 设为可写或只读（只读时 saveJournal、saveMeta 和写、删截图文件的方法都会拒绝） */
     setWritable(value) { writable = !!value; },
     isWritable: () => writable && !closed && !backend.closed,
 
@@ -307,7 +319,8 @@ function createLocalDb(backend, opts) {
       return backend.put(STORES.meta, key, value);
     },
 
-    // 截图文件（下一步用）：记录形如 { blob, uploaded, addedAt, ... }，键是文件路径
+    // 截图文件（shots.js 用）：键是文件路径（shots/<交易 id>/<截图 id>.webp 等），
+    // 记录形如 { blob, type, bytes, uploaded, addedAt }；uploaded 给以后的同步用
     async getFile(path) {
       const rec = await backend.get(STORES.files, path);
       return rec === undefined ? null : rec;
@@ -321,6 +334,22 @@ function createLocalDb(backend, opts) {
       const err = guard();
       if (err) throw err;
       return backend.delete(STORES.files, path);
+    },
+    /**
+     * 在一个事务里写入几个文件（截图的大图和缩略图）：要么全写进去，要么一个都不写。
+     * 事务在调用时就发出（IndexedDB 按先后执行），之后再读这些路径一定读得到。
+     * @param {Array<[string, object]>} entries [[路径, 记录], ...]
+     */
+    async putFiles(entries) {
+      const err = guard();
+      if (err) throw err;
+      return backend.putMany(STORES.files, Array.from(entries)).catch((e) => { throw idbError(e); });
+    },
+    /** 在一个事务里删掉几个文件（没有的路径跳过） */
+    async deleteFiles(paths) {
+      const err = guard();
+      if (err) throw err;
+      return backend.deleteMany(STORES.files, Array.from(paths)).catch((e) => { throw idbError(e); });
     },
     async listFiles() { return backend.keys(STORES.files); },
 
