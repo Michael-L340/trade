@@ -7,7 +7,7 @@ import {
   COLUMNS, NAV_COLUMNS, NEWLINE_MARK, nextCell, keyAction, resultForKey, isComposingKey, interpretInput, liveValue,
   emptyRowPatch, toCellText, fromCellText, tradeCellText, missingFlags, outcomeChip, headerLabel, segmentHint,
   readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
-  pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText, isBlankNewTrade,
+  pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText, PNL_WORDS,
 } from '../src/ui/sheet.js';
 import { pickCurrentShot } from '../src/ui/detail.js';
 import { deriveJournal, deriveTrade } from '../src/calc.js';
@@ -560,15 +560,12 @@ test('详情的大图：截图列表变了以后显示哪一张', () => {
   assert.equal(pickCurrentShot(ids, 'sh_b', [...ids, 'sh_d']), 'sh_b', '加了新的不跳（加完由详情自己选新的那张）');
 });
 
-test('isBlankNewTrade：只带默认值的新一笔算空，填过任何内容就不算', () => {
-  const base = { symbol: 'XAUUSD', risk: 100 };
-  const t = { symbol: 'XAUUSD', risk: 100, rr: null, result: null, pnlOverride: null, reason: '', note: '', shots: [] };
-  assert.equal(isBlankNewTrade(t, base), true);
-  assert.equal(isBlankNewTrade({ ...t, symbol: null }, { symbol: null, risk: null }), false); // risk 不同
-  assert.equal(isBlankNewTrade({ ...t, symbol: null, risk: null }, { symbol: null, risk: null }), true);
-  assert.equal(isBlankNewTrade({ ...t, symbol: 'EURUSD' }, base), false);
-  assert.equal(isBlankNewTrade({ ...t, rr: 2 }, base), false);
-  assert.equal(isBlankNewTrade({ ...t, result: 'win' }, base), false);
-  assert.equal(isBlankNewTrade({ ...t, reason: '回踩' }, base), false);
-  assert.equal(isBlankNewTrade({ ...t, shots: [{ id: 's' }] }, base), false);
+
+test('盈亏格：打盈/亏等字是按系统出场，打金额交给 setPnlInput', () => {
+  assert.deepEqual(interpretInput('pnl', ' 盈 '), { ok: true, result: 'win' });
+  for (const w of ['盈利', '止盈']) assert.equal(interpretInput('pnl', w).result, 'win');
+  for (const w of ['亏', '亏损', '止损']) assert.equal(interpretInput('pnl', w).result, 'loss');
+  assert.deepEqual(interpretInput('pnl', '-50'), { ok: true, pnl: '-50' });
+  assert.equal(interpretInput('pnl', '大赚').ok, false);
+  assert.equal(Object.isFrozen(PNL_WORDS), true);
 });

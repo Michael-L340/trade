@@ -231,6 +231,9 @@ function clip(s, n = 16) {
  *   ok 时：patch 给 updateTrade / updateSystem；盈亏格给的是 pnl（setPnlInput 的参数）。
  *   不 ok 时：message 是给用户看的说明（"……没看懂，已恢复原值"）。
  */
+/** 盈亏格里代表"按系统止盈/止损"的字 */
+export const PNL_WORDS = Object.freeze({ 盈: 'win', 盈利: 'win', 止盈: 'win', 亏: 'loss', 亏损: 'loss', 止损: 'loss' });
+
 export function interpretInput(col, text, opts = {}) {
   const s = typeof text === 'string' ? text : '';
   const blank = s.trim() === '';
@@ -254,8 +257,10 @@ export function interpretInput(col, text, opts = {}) {
     }
     case 'pnl': {
       if (blank) return { ok: true, pnl: null };
+      const word = PNL_WORDS[s.trim()];
+      if (word) return { ok: true, result: word }; // 按系统出场：结果跟着变，金额回到自动值
       if (parseNumber(s, { currency: opts.currency }) === null) {
-        return { ok: false, message: `盈亏金额“${clip(s)}”没看懂，已恢复原值` };
+        return { ok: false, message: `盈亏“${clip(s)}”没看懂，已恢复原值。可以打 盈、亏，或者实际金额` };
       }
       return { ok: true, pnl: s };
     }
@@ -311,12 +316,6 @@ export function tradeCellText(col, t, d) {
 export function missingFlags(t, d) {
   const decided = t.result === 'win' || t.result === 'loss' || d.edited === true;
   return { rr: decided && d.missing.rr, risk: decided && d.missing.risk };
-}
-
-/** 刚从空行建出来、除了默认值什么都没填的一笔（日期、方向不算） */
-export function isBlankNewTrade(t, base) {
-  return (t.symbol || null) === (base.symbol || null) && (t.risk ?? null) === (base.risk ?? null)
-    && t.rr == null && !t.result && t.pnlOverride == null && !t.reason && !t.note && !(t.shots && t.shots.length);
 }
 
 /** 结果格的标签：盈、亏、平、持仓中、缺数 */
@@ -628,12 +627,13 @@ export function mountSheet(container, store, opts = {}) {
   table.append(caption, colgroup, thead, tbody);
   scroll.appendChild(table);
   const footer = h('div', 'sheet-footer');
+  const addTradeBtn = button('btn primary', '＋ 记一笔');
   const addBtn = button('btn', '＋ 换交易系统（插入系统行）');
   const demoBtn = button('btn', '看看示例数据');
   demoBtn.hidden = true;
   const hint = h('span', 'footer-hint');
   hint.setAttribute('role', 'status');
-  footer.append(addBtn, demoBtn, hint);
+  footer.append(addTradeBtn, addBtn, demoBtn, hint);
   container.append(scroll, footer);
   // 品种的候选项（用过的品种，按近 30 天使用次数排序），点品种格时浏览器会列出来直接选
   const symbolListId = 'tj-symbols-' + Math.random().toString(36).slice(2, 8);
@@ -1134,13 +1134,14 @@ export function mountSheet(container, store, opts = {}) {
     const can = canEdit();
     // 只读时（另一个标签页在写、版本守卫拦着）不显示"换交易系统"（7.11）
     setHidden(addBtn, !can);
+    setHidden(addTradeBtn, !can);
     const auto = !st.ui.demo && st.derived.grouped.trades.length === 0;
     setHidden(demoBtn, !(onLoadDemo && (demoOverride === null ? auto : demoOverride)));
     let text;
     let warn = false;
     if (st.ui.demo) text = '现在是示例数据：只在这个页面里，随便改都不会保存；退出示例后回到你自己的数据。';
     else if (st.ui.readOnly) { text = readOnlyMessage(st.ui.readOnly) + '。'; warn = true; }
-    else text = '在最后一行空行里填盈亏比就会新增一笔，止盈金额立刻算出；出场后回来点结果。';
+    else text = '点「＋ 记一笔」新增一行。出场后在盈亏格打「盈」或「亏」；打实际金额就是没按系统做，会标「改」。';
     setText(hint, text);
     setClass(hint, 'warn', warn);
   }
@@ -1338,7 +1339,7 @@ export function mountSheet(container, store, opts = {}) {
     const view = viewOf(input);
     if (!view) return null;
     const col = input.dataset.col;
-    edit = { input, view, col, entryText: input.value, entryRaw: rawValue(view, col), edited: false, createdId: null, createdBase: null };
+    edit = { input, view, col, entryText: input.value, entryRaw: rawValue(view, col), edited: false, createdId: null };
     return edit;
   }
 
@@ -1388,34 +1389,15 @@ export function mountSheet(container, store, opts = {}) {
       if (res.message) showToast(res.message);
     } else if (view.kind === 'system') {
       store.actions.updateSystem(view.id, res.patch);
+    } else if (col === 'pnl' && res.result) {
+      store.actions.updateTrade(view.id, { result: res.result, pnlOverride: null });
     } else if (col === 'pnl') {
       store.actions.setPnlInput(view.id, res.pnl);
     } else {
       store.actions.updateTrade(view.id, res.patch);
     }
-    if (dropIfStillBlank(s)) return;
     renderInput(s);
     rebaseline(s);
-  }
-
-  /** 在空行里刚建的这一笔，离开格子时什么都没留下（比如输入法打了拼音又删掉），就撤掉、变回空行 */
-  function dropIfStillBlank(s) {
-    const { view, input } = s;
-    if (view.kind !== 'trade' || !s.createdId || s.createdId !== view.id || !s.createdBase) return false;
-    const it = store.get().derived.tradeById.get(view.id);
-    if (!it || !isBlankNewTrade(it.t, s.createdBase)) return false;
-    demoting = view;
-    let undo = null;
-    try {
-      undo = store.actions.deleteTrade(view.id);
-    } finally {
-      demoting = null;
-    }
-    if (!undo) return false;
-    input.value = '';
-    s.createdId = null;
-    rebaseline(s);
-    return true;
   }
 
   /** Esc：恢复成进入这一格时的值；这一笔是在这一格里刚建的，就撤掉它、变回空行 */
@@ -1465,9 +1447,8 @@ export function mountSheet(container, store, opts = {}) {
     s.edited = true;
     const view = s.view;
     if (view.kind === 'empty') {
-      const base = store.emptyRowDefaults();
       const id = createFromEmpty(view, emptyRowPatch(s.col, input.value, ctx()));
-      if (id && view.kind === 'trade' && view.id === id) { s.createdId = id; s.createdBase = base; }
+      if (id && view.kind === 'trade' && view.id === id) s.createdId = id;
       return;
     }
     if (view.kind === 'trade' && canEdit()) {
@@ -1505,7 +1486,7 @@ export function mountSheet(container, store, opts = {}) {
 
   // ---------- 焦点移动 ----------
   function navRows() {
-    return Array.from(tbody.children).map((tr) => {
+    return Array.from(tbody.children).filter((tr) => !tr.classList.contains('empty-row')).map((tr) => {
       const v = viewOfTr(tr);
       return { kind: v ? v.kind : 'system', cols: v ? NAV_COLUMNS[v.kind] : [] };
     });
@@ -1779,6 +1760,13 @@ export function mountSheet(container, store, opts = {}) {
     if (id) focusCell(id, 'name');
   }
 
+  /** ＋ 记一笔：按默认值（今天、沿用上一笔的品种和止损）新增一笔，光标放到品种格 */
+  function addTrade() {
+    if (!canEdit()) { notifyReadOnly(); return; }
+    const id = createFromEmpty(emptyView, {});
+    if (id) focusCell(id, 'symbol');
+  }
+
   function addSystem() {
     if (!canEdit()) { notifyReadOnly(); return; }
     const id = store.actions.appendSystemRow();
@@ -1986,6 +1974,7 @@ export function mountSheet(container, store, opts = {}) {
   listen(tbody, 'contextmenu', onContextMenu);
   // 截图（7.8）：光标在某一行的任意格子里按 Ctrl+V，剪贴板里有图片就加到这一行；是文字照常粘贴，不拦截
   listen(tbody, 'paste', onPaste);
+  listen(addTradeBtn, 'click', addTrade);
   listen(addBtn, 'click', addSystem);
   listen(demoBtn, 'click', () => {
     if (!onLoadDemo) return;
