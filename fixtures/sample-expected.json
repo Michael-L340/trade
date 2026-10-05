@@ -1,0 +1,17 @@
+{
+  "trades": {
+    "t_01": { "takeProfit": 200, "pnl": 200,  "r": 2.0,  "outcome": "win" },
+    "t_06": { "takeProfit": 200, "pnl": -50,  "r": -0.5, "outcome": "loss" },
+    "t_09": { "takeProfit": 200, "pnl": -150, "r": -1.5, "outcome": "loss" },
+    "t_10": { "takeProfit": 300, "pnl": 120,  "r": 1.2,  "outcome": "win" },
+    "t_12": { "takeProfit": 180, "pnl": 180,  "r": 1.8,  "outcome": "win" },
+    "t_15": { "takeProfit": 150, "pnl": -100, "r": -1.0, "outcome": "loss" },
+    "t_16": { "takeProfit": 200, "pnl": null, "r": null, "outcome": "open" }
+  },
+  "systems": {
+    "sys_a": { "n": 12, "wins": 5, "losses": 7, "open": 0, "winRate": 0.4166667, "ciHalfWidth": 27.9, "avgWinR": 2.1, "avgLossR": 1.0, "payoff": 2.1, "expectancy": 0.2916667, "profitFactor": 1.5, "totalR": 3.5, "totalMoney": 350, "maxDrawdownR": -2.5, "maxLossStreak": 2 },
+    "sys_b": { "n": 3, "wins": 1, "losses": 2, "open": 1, "winRate": 0.3333333, "ciHalfWidth": null, "avgWinR": 1.5, "avgLossR": 1.0, "payoff": 1.5, "expectancy": -0.1666667, "profitFactor": 0.75, "totalR": -0.5, "totalMoney": -50, "maxDrawdownR": -1.0, "maxLossStreak": 1 }
+  },
+  "all": { "n": 15, "wins": 6, "losses": 9, "open": 1, "winRate": 0.4, "ciHalfWidth": 24.8, "avgWinR": 2.0, "avgLossR": 1.0, "payoff": 2.0, "expectancy": 0.2, "profitFactor": 1.3333333, "totalR": 3.0, "totalMoney": 300, "avgWinMoney": 200, "avgLossMoney": 100, "maxDrawdownR": -2.5, "maxLossStreak": 2 },
+  "cumulativeR": [0, 2.0, 1.0, 0.0, 2.5, 1.5, 1.0, 4.0, 3.0, 1.5, 2.7, 1.7, 3.5, 2.5, 4.0, 3.0]
+}

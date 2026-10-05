@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "currency": "$",
+  "rows": [
+    { "type": "system", "id": "sys_a", "name": "趋势回调", "desc": "顺日线趋势，H1 回踩前高或前低，出现反转 K 线后进场；止损放在回踩低点外。", "createdAt": "2026-09-01T08:00:00Z" },
+    { "type": "trade", "id": "t_01", "date": "2026-09-01", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "win",  "pnlOverride": null, "reason": "日线上升结构（HH/HL），H1 回踩前高 4105 转支撑，收出看涨吞没后进场。", "note": "按计划 2 倍止盈。", "shots": [] },
+    { "type": "trade", "id": "t_02", "date": "2026-09-02", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "H1 回踩 20 均线，出现长下影线，顺势做多。", "note": "没等 K 线收盘就进了，信号其实不成立。", "shots": [] },
+    { "type": "trade", "id": "t_03", "date": "2026-09-03", "symbol": "EURUSD", "direction": "short", "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "H4 下降结构，反弹到前低 1.1745 转阻力，pin bar 做空。", "note": "止损被扫后才下跌，止损放得太紧。", "shots": [] },
+    { "type": "trade", "id": "t_04", "date": "2026-09-04", "symbol": "XAUUSD", "direction": "long",  "rr": 2.5, "risk": 100, "result": "win",  "pnlOverride": null, "reason": "回踩上升趋势线，和 4118 水平位重合，H1 早晨之星。", "note": "按计划 2.5 倍止盈。", "shots": [] },
+    { "type": "trade", "id": "t_05", "date": "2026-09-08", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "创新高后回踩 4148，挂单进场。", "note": "回踩还没到位就追进去了。", "shots": [] },
+    { "type": "trade", "id": "t_06", "date": "2026-09-09", "symbol": "NAS100", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": -50,  "reason": "日线多头，H1 回踩前高 24850 后企稳。", "note": "数据公布前手动平仓，只亏 50。", "shots": [] },
+    { "type": "trade", "id": "t_07", "date": "2026-09-10", "symbol": "XAUUSD", "direction": "long",  "rr": 3,   "risk": 100, "result": "win",  "pnlOverride": null, "reason": "回踩 4136 需求区，H1 走出双底，第二个低点更高，突破颈线进场。", "note": "拿到 3 倍，全程没动过止损。", "shots": [] },
+    { "type": "trade", "id": "t_08", "date": "2026-09-14", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "突破 4170 后回踩，直接做多。", "note": "连续第三次在高位追多。", "shots": [] },
+    { "type": "trade", "id": "t_09", "date": "2026-09-15", "symbol": "XAUUSD", "direction": "short", "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": -150, "reason": "H1 跌破前低，反抽时做空。", "note": "逆着日线趋势做的，还把止损挪远了，亏了 150。", "shots": [] },
+    { "type": "trade", "id": "t_10", "date": "2026-09-16", "symbol": "XAUUSD", "direction": "long",  "rr": 3,   "risk": 100, "result": "win",  "pnlOverride": 120,  "reason": "回踩 4150 前高，看涨吞没进场。", "note": "到 120 就提前止盈了，原计划是 3 倍。", "shots": [] },
+    { "type": "trade", "id": "t_11", "date": "2026-09-17", "symbol": "EURUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "H4 回踩支撑 1.1700，锤子线做多。", "note": "", "shots": [] },
+    { "type": "trade", "id": "t_12", "date": "2026-09-18", "symbol": "XAUUSD", "direction": "long",  "rr": 1.8, "risk": 100, "result": "win",  "pnlOverride": null, "reason": "回踩趋势线，H1 孕线向上突破后进场。", "note": "止盈放在前高下方。", "shots": [] },
+    { "type": "system", "id": "sys_b", "name": "区间假突破", "desc": "2026-09-22 起改用：H4 区间上下沿假突破、收回区间后反手；止损放在影线外。", "createdAt": "2026-09-22T08:00:00Z" },
+    { "type": "trade", "id": "t_13", "date": "2026-09-22", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": "loss", "pnlOverride": null, "reason": "H4 区间下沿 4150 假跌破，收回区间后做多。", "note": "区间已经在变窄，其实是下跌中继。", "shots": [] },
+    { "type": "trade", "id": "t_14", "date": "2026-09-24", "symbol": "XAUUSD", "direction": "short", "rr": 1.5, "risk": 100, "result": "win",  "pnlOverride": null, "reason": "区间上沿 4190 假突破，H4 收回后出现看跌吞没。", "note": "目标区间中轴，1.5 倍出场。", "shots": [] },
+    { "type": "trade", "id": "t_15", "date": "2026-09-29", "symbol": "XAUUSD", "direction": "short", "rr": 1.5, "risk": 100, "result": "loss", "pnlOverride": null, "reason": "第三次冲上沿 4190，H4 长上影线收回后做空。", "note": "第三次测试，突破的概率已经变大。", "shots": [] },
+    { "type": "trade", "id": "t_16", "date": "2026-10-05", "symbol": "XAUUSD", "direction": "long",  "rr": 2,   "risk": 100, "result": null,   "pnlOverride": null, "reason": "区间下沿 4150 再次假跌破，H4 收回区间后做多。", "note": "目标看区间上沿。", "shots": [] }
+  ]
+}
