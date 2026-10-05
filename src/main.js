@@ -7,6 +7,8 @@
 //      数据是更新版本的网站写的 → 只读并提示刷新；读不出来或数据有问题 → 只读，不覆盖原来的数据。
 //   4. 挂上顶部统计、曲线、交易表、单笔详情；connectStore 负责自动保存（示例模式不写）、
 //      用 BroadcastChannel 通知其他标签页重读。
+//      截图（7.7、7.8）：建一个 shots.js 的 ctx 和一个 Blob 地址缓存，表格和详情共用（共用同一套地址计数）。
+//      进出示例模式时内存里的示例截图由 shots.js 自己清空，这里把缓存里的 Blob 地址全部释放。
 //   5. hash 路由：#/ 是交易表，#/settings 是设置页。
 //   6. 关页面或切到后台时，立刻把还没写的修改写进 IndexedDB。
 //
@@ -20,6 +22,7 @@ import { mountSummary } from './ui/summary.js';
 import { mountChart } from './ui/chart.js';
 import { mountSheet, readOnlyMessage } from './ui/sheet.js';
 import { mountDetail } from './ui/detail.js';
+import * as Shots from './shots.js';
 import { downloadText, exportCsv, JSON_MIME, mountSettings } from './ui/settings.js';
 import { showToast } from './ui/toast.js';
 
@@ -125,11 +128,32 @@ async function boot() {
   }
 
   // ---------- 4. 界面 ----------
-  const detail = mountDetail(els.detail, store);
+  // 截图：表格和详情只通过这里的函数和地址缓存存取截图，不直接碰 IndexedDB。示例模式以 store 的 ui.demo 为准。
+  const shotCtx = {
+    store,
+    db,
+    // 撤销删除截图时文件写回失败（几乎不会）：元数据已经放回，这里告诉用户
+    onError(err) { showToast('撤销删除时截图文件没能写回（缩略图会显示"文件不在本机"）：' + messageOf(err)); },
+  };
+  const urlCache = Shots.createUrlCache(shotCtx);
+  const shots = {
+    addShot: (tradeId, blob, label) => Shots.addShot(shotCtx, tradeId, blob, label),
+    deleteShot: (tradeId, shotId) => Shots.deleteShot(shotCtx, tradeId, shotId),
+    setShotLabel: (tradeId, shotId, label) => Shots.setShotLabel(shotCtx, tradeId, shotId, label),
+    defaultLabel: Shots.defaultLabel,
+    urlCache,
+  };
+  // 进出示例模式：旧数据的 Blob 地址全部释放。这个订阅要排在表格之前：表格整表重建时
+  // （没有 IntersectionObserver 的浏览器）可能马上要新地址，先放掉旧的，免得把新要的也放掉。
+  const offDemoUrls = store.subscribe((ev) => {
+    if (ev.type === 'journal' && (ev.reason === 'demo' || ev.reason === 'exitDemo')) urlCache.releaseAll();
+  });
+
+  const detail = mountDetail(els.detail, store, { shots });
   const openDetail = (id) => { detail.open(id); };
   const summary = mountSummary(els.summary, store);
   const chart = mountChart(els.chart, store, { openDetail });
-  const sheet = mountSheet(els.sheet, store, { openDetail, onLoadDemo: loadDemo });
+  const sheet = mountSheet(els.sheet, store, { openDetail, onLoadDemo: loadDemo, shots });
 
   const link = connectStore(store, db, {
     writer,
@@ -381,6 +405,7 @@ async function boot() {
     sheet,
     detail,
     chart,
+    shots,
     summary,
     route,
     page: () => page,
@@ -398,6 +423,8 @@ async function boot() {
       detail.destroy();
       chart.destroy();
       summary.destroy();
+      offDemoUrls();
+      urlCache.releaseAll();
       writer.release();
     },
   };
