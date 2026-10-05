@@ -171,7 +171,7 @@ export function mountSettings(container, store, opts = {}) {
   secCur.appendChild(curRow);
 
   // ---------- 备份和导出 ----------
-  const secData = section('备份和导出', '数据只保存在这个浏览器里。请定期导出 journal.json 备份；换浏览器、换电脑时，用"从 journal.json 恢复"载入。CSV 给 Excel 用，不能拿来恢复。');
+  const secData = section('备份和导出', '数据只保存在这个浏览器里。请定期导出 journal.json 备份；换浏览器、换电脑时，用"从 journal.json 恢复"载入。journal.json 只记录有哪些截图，不含图片本身：在别的浏览器里恢复后，截图位置会显示"文件不在本机"。CSV 给 Excel 用，不能拿来恢复。');
   const demoNote = h('p', 'note warn');
   demoNote.hidden = true;
   const btnRow = h('div', 'btn-row');
