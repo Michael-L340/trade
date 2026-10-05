@@ -313,6 +313,12 @@ export function missingFlags(t, d) {
   return { rr: decided && d.missing.rr, risk: decided && d.missing.risk };
 }
 
+/** 刚从空行建出来、除了默认值什么都没填的一笔（日期、方向不算） */
+export function isBlankNewTrade(t, base) {
+  return (t.symbol || null) === (base.symbol || null) && (t.risk ?? null) === (base.risk ?? null)
+    && t.rr == null && !t.result && t.pnlOverride == null && !t.reason && !t.note && !(t.shots && t.shots.length);
+}
+
 /** 结果格的标签：盈、亏、平、持仓中、缺数 */
 export function outcomeChip(outcome) {
   const cls = outcome === 'win' ? 'chip win' : outcome === 'loss' ? 'chip loss' : outcome === 'breakeven' ? 'chip flat' : 'chip open';
@@ -886,7 +892,8 @@ export function mountSheet(container, store, opts = {}) {
     setText(c.tp.td, tradeCellText('tp', t, d));
 
     const chip = outcomeChip(d.outcome);
-    setHidden(c.result.label, false);
+    const noChip = d.outcome === 'open' && d.missing.rr; // 还没填盈亏比：结果格留空，不显示"持仓中"
+    setHidden(c.result.label, noChip);
     setAttr(c.result.label, 'class', chip.cls);
     setText(c.result.label, chip.text);
     setAttr(c.result.btn, 'aria-label', `第 ${no} 笔 结果：${chip.text}（点一下切换；1 或 Y 盈，0 或 N 亏，退格清空）`);
@@ -1331,7 +1338,7 @@ export function mountSheet(container, store, opts = {}) {
     const view = viewOf(input);
     if (!view) return null;
     const col = input.dataset.col;
-    edit = { input, view, col, entryText: input.value, entryRaw: rawValue(view, col), edited: false, createdId: null };
+    edit = { input, view, col, entryText: input.value, entryRaw: rawValue(view, col), edited: false, createdId: null, createdBase: null };
     return edit;
   }
 
@@ -1386,8 +1393,29 @@ export function mountSheet(container, store, opts = {}) {
     } else {
       store.actions.updateTrade(view.id, res.patch);
     }
+    if (dropIfStillBlank(s)) return;
     renderInput(s);
     rebaseline(s);
+  }
+
+  /** 在空行里刚建的这一笔，离开格子时什么都没留下（比如输入法打了拼音又删掉），就撤掉、变回空行 */
+  function dropIfStillBlank(s) {
+    const { view, input } = s;
+    if (view.kind !== 'trade' || !s.createdId || s.createdId !== view.id || !s.createdBase) return false;
+    const it = store.get().derived.tradeById.get(view.id);
+    if (!it || !isBlankNewTrade(it.t, s.createdBase)) return false;
+    demoting = view;
+    let undo = null;
+    try {
+      undo = store.actions.deleteTrade(view.id);
+    } finally {
+      demoting = null;
+    }
+    if (!undo) return false;
+    input.value = '';
+    s.createdId = null;
+    rebaseline(s);
+    return true;
   }
 
   /** Esc：恢复成进入这一格时的值；这一笔是在这一格里刚建的，就撤掉它、变回空行 */
@@ -1437,8 +1465,9 @@ export function mountSheet(container, store, opts = {}) {
     s.edited = true;
     const view = s.view;
     if (view.kind === 'empty') {
+      const base = store.emptyRowDefaults();
       const id = createFromEmpty(view, emptyRowPatch(s.col, input.value, ctx()));
-      if (id && view.kind === 'trade' && view.id === id) s.createdId = id;
+      if (id && view.kind === 'trade' && view.id === id) { s.createdId = id; s.createdBase = base; }
       return;
     }
     if (view.kind === 'trade' && canEdit()) {

@@ -7,7 +7,7 @@ import {
   COLUMNS, NAV_COLUMNS, NEWLINE_MARK, nextCell, keyAction, resultForKey, isComposingKey, interpretInput, liveValue,
   emptyRowPatch, toCellText, fromCellText, tradeCellText, missingFlags, outcomeChip, headerLabel, segmentHint,
   readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
-  pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText,
+  pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText, isBlankNewTrade,
 } from '../src/ui/sheet.js';
 import { pickCurrentShot } from '../src/ui/detail.js';
 import { deriveJournal, deriveTrade } from '../src/calc.js';
@@ -558,4 +558,17 @@ test('详情的大图：截图列表变了以后显示哪一张', () => {
   assert.equal(pickCurrentShot([], null, ['sh_a', 'sh_b']), 'sh_a', '原来没有选：第一张');
   assert.equal(pickCurrentShot(ids, 'sh_b', []), null, '没有截图了');
   assert.equal(pickCurrentShot(ids, 'sh_b', [...ids, 'sh_d']), 'sh_b', '加了新的不跳（加完由详情自己选新的那张）');
+});
+
+test('isBlankNewTrade：只带默认值的新一笔算空，填过任何内容就不算', () => {
+  const base = { symbol: 'XAUUSD', risk: 100 };
+  const t = { symbol: 'XAUUSD', risk: 100, rr: null, result: null, pnlOverride: null, reason: '', note: '', shots: [] };
+  assert.equal(isBlankNewTrade(t, base), true);
+  assert.equal(isBlankNewTrade({ ...t, symbol: null }, { symbol: null, risk: null }), false); // risk 不同
+  assert.equal(isBlankNewTrade({ ...t, symbol: null, risk: null }, { symbol: null, risk: null }), true);
+  assert.equal(isBlankNewTrade({ ...t, symbol: 'EURUSD' }, base), false);
+  assert.equal(isBlankNewTrade({ ...t, rr: 2 }, base), false);
+  assert.equal(isBlankNewTrade({ ...t, result: 'win' }, base), false);
+  assert.equal(isBlankNewTrade({ ...t, reason: '回踩' }, base), false);
+  assert.equal(isBlankNewTrade({ ...t, shots: [{ id: 's' }] }, base), false);
 });

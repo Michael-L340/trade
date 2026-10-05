@@ -109,7 +109,7 @@ export function computeStats(items) {
   });
   const avgWinMoney = mean(wins.map(function (it) { return it.d.pnl; }));
   const avgLossMoney = mean(losses.map(function (it) { return Math.abs(it.d.pnl); }));
-  const open = items.filter(function (it) { return it.d.outcome === 'open'; }).length;
+  const open = items.filter(function (it) { return it.d.outcome === 'open' && !(it.d.missing && it.d.missing.rr); }).length; // 还没填盈亏比的不算持仓（表格里结果格也留空）
   return {
     n: n, wins: wins.length, losses: losses.length, open: open, winRate: winRate, ciHalfWidth: ciHalfWidth,
     avgWinR: avgWinR, avgLossR: avgLossR, payoff: payoff, expectancy: expectancy, profitFactor: profitFactor,

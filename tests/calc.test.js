@@ -203,3 +203,9 @@ test('计算不改动入参', () => {
   deriveJournal(journal.rows);
   assert.equal(JSON.stringify(journal), before);
 });
+
+test('统计：还没填盈亏比的一笔不算持仓中', () => {
+  const it = items([null, null]);
+  it[1].d.missing = { rr: true, risk: false };
+  assert.equal(computeStats(it).open, 1);
+});
