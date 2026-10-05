@@ -32,3 +32,23 @@ export function symbolOptions(rows, today, days = 30) {
     .sort((a, b) => b[1].recent - a[1].recent || b[1].total - a[1].total || (a[1].last < b[1].last ? 1 : a[1].last > b[1].last ? -1 : 0))
     .map(([sym]) => sym);
 }
+
+/**
+ * 品种下拉里显示哪些：还没打字（刚点进格子）就全部列出；打了字就按打的字筛（不分大小写），开头对得上的排前面。
+ * @param {string[]} opts symbolOptions 排好序的候选
+ * @param {string} text 格子里现在的文字
+ * @param {boolean} typed 点进格子后打过字没有
+ */
+export function filterSymbols(opts, text, typed) {
+  const q = typeof text === 'string' ? text.trim().toUpperCase() : '';
+  if (!typed || !q) return opts.slice();
+  const head = [];
+  const mid = [];
+  for (const s of opts) {
+    const u = s.toUpperCase();
+    if (u === q) continue; // 已经打全了，不用再列
+    if (u.startsWith(q)) head.push(s);
+    else if (u.includes(q)) mid.push(s);
+  }
+  return head.concat(mid);
+}

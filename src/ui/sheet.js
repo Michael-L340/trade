@@ -19,7 +19,7 @@ import { sampleHint } from '../calc.js';
 import {
   fmtDirection, fmtMoney, fmtPct, fmtR, fmtRR, fmtTwo, OUTCOME_LABEL, parseDate, parseNumber, todayLocal,
 } from '../format.js';
-import { symbolOptions } from '../symbols.js';
+import { symbolOptions, filterSymbols } from '../symbols.js';
 import { confirmDialog, showToast } from './toast.js';
 
 // ====================================================================
@@ -634,19 +634,68 @@ export function mountSheet(container, store, opts = {}) {
   hint.setAttribute('role', 'status');
   footer.append(addBtn, demoBtn, hint);
   container.append(scroll, footer);
-  // 品种的候选项（用过的品种，按近 30 天使用次数排序），点品种格时浏览器会列出来直接选
-  const symbolListId = 'tj-symbols-' + Math.random().toString(36).slice(2, 8);
-  const symbolList = doc.createElement('datalist');
-  symbolList.id = symbolListId;
-  container.appendChild(symbolList);
-  let symbolKey = '';
+  // 品种的候选项（用过的品种，按近 30 天使用次数排序，所有系统通用）。点品种格就弹出全部候选；打字时按打的字筛。
+  // 不用浏览器自带的 datalist：它只列和格子里现有文字对得上的，新一笔已经填了品种时就看不到别的。
+  let symbolOpts = [];
   function refreshSymbols() {
-    const opts = symbolOptions(store.get().journal.rows, todayLocal(new Date()));
-    const key = opts.join('\u0001');
-    if (key === symbolKey) return;
-    symbolKey = key;
-    symbolList.textContent = '';
-    for (const sym of opts) { const o = doc.createElement('option'); o.value = sym; symbolList.appendChild(o); }
+    symbolOpts = symbolOptions(store.get().journal.rows, todayLocal(new Date()));
+    if (symPop.input) renderSymPop();
+  }
+  const symPop = { el: h('div', 'sym-pop'), input: null, typed: false, items: [], active: -1 };
+  symPop.el.hidden = true;
+  symPop.el.setAttribute('role', 'listbox');
+  doc.body.appendChild(symPop.el);
+
+  function openSymPop(input) {
+    if (input.readOnly) return;
+    symPop.input = input;
+    symPop.typed = false;
+    renderSymPop();
+  }
+  function closeSymPop() {
+    symPop.input = null;
+    symPop.el.hidden = true;
+  }
+  function renderSymPop() {
+    const input = symPop.input;
+    if (!input || !input.isConnected) { closeSymPop(); return; }
+    symPop.items = filterSymbols(symbolOpts, input.value, symPop.typed);
+    symPop.active = -1;
+    symPop.el.textContent = '';
+    if (!symPop.items.length) { symPop.el.hidden = true; return; }
+    symPop.items.forEach((sym, i) => {
+      const o = h('div', 'sym-opt', sym);
+      o.setAttribute('role', 'option');
+      o.dataset.i = String(i);
+      symPop.el.appendChild(o);
+    });
+    symPop.el.hidden = false;
+    placeSymPop();
+  }
+  /** 下拉贴在品种格下面（表格滚动、页面滚动时跟着挪） */
+  function placeSymPop() {
+    if (!symPop.input || symPop.el.hidden) return;
+    const r = symPop.input.getBoundingClientRect();
+    symPop.el.style.left = Math.round(r.left) + 'px';
+    const h = symPop.el.offsetHeight;
+    const vh = (doc.defaultView || window).innerHeight;
+    const up = r.bottom + 2 + h > vh && r.top - 2 - h >= 0; // 下面放不下就往上弹
+    symPop.el.style.top = Math.round(up ? r.top - 2 - h : r.bottom + 2) + 'px';
+    symPop.el.style.minWidth = Math.round(r.width) + 'px';
+  }
+  function markSymPop(i) {
+    symPop.active = i;
+    Array.from(symPop.el.children).forEach((o, k) => o.classList.toggle('active', k === i));
+    const o = symPop.el.children[i];
+    if (o && typeof o.scrollIntoView === 'function') o.scrollIntoView({ block: 'nearest' });
+  }
+  function pickSymbol(i) {
+    const input = symPop.input;
+    const sym = symPop.items[i];
+    if (!input || sym === undefined) return;
+    input.value = sym;
+    input.dispatchEvent(new Event('input', { bubbles: true })); // 和打字一样走编辑流程，失焦或回车时保存
+    closeSymPop();
   }
 
   // ---------- 状态 ----------
@@ -674,7 +723,6 @@ export function mountSheet(container, store, opts = {}) {
     input.dataset.col = col;
     input.setAttribute('autocomplete', 'off');
     input.spellcheck = false;
-    if (col === 'symbol') input.setAttribute('list', symbolListId);
     td.appendChild(input);
     return { td, input };
   }
@@ -2022,6 +2070,37 @@ export function mountSheet(container, store, opts = {}) {
     composing.delete(input);
     if (isCellInput(input)) handleTyped(input); // 组字结束：这时才算输入（Chrome 组字中的 input 事件都跳过了）
   });
+  // 品种下拉：点进品种格就弹；打字时筛；↑↓ 选、回车确定（回车照常保存并移到下一行）、Esc 先关下拉
+  listen(tbody, 'focusin', (e) => {
+    const t = e.target;
+    if (isCellInput(t) && t.dataset.col === 'symbol') openSymPop(t);
+    else if (symPop.input) closeSymPop();
+  });
+  listen(tbody, 'focusout', (e) => { if (e.target === symPop.input) closeSymPop(); });
+  listen(tbody, 'input', (e) => {
+    if (e.target === symPop.input && e.isTrusted) { symPop.typed = true; renderSymPop(); }
+  });
+  listen(symPop.el, 'mousedown', (e) => {
+    e.preventDefault(); // 不让品种格失焦
+    const o = e.target && typeof e.target.closest === 'function' ? e.target.closest('.sym-opt') : null;
+    if (o) pickSymbol(Number(o.dataset.i));
+  });
+  listen(tbody, 'keydown', (e) => {
+    if (!symPop.input || e.target !== symPop.input || symPop.el.hidden || e.isComposing) return;
+    const n = symPop.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      markSymPop(e.key === 'ArrowDown' ? (symPop.active + 1) % n : (symPop.active <= 0 ? n - 1 : symPop.active - 1));
+    } else if (e.key === 'Enter' && symPop.active >= 0) {
+      pickSymbol(symPop.active); // 不拦：回车接着照常保存、移到下一行
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeSymPop();
+    }
+  }, { capture: true });
+  listen(doc.defaultView || window, 'scroll', (e) => { if (e.target !== symPop.el) placeSymPop(); }, { capture: true });
   listen(tbody, 'keydown', onKeyDown);
   listen(tbody, 'click', onClick);
   listen(tbody, 'contextmenu', onContextMenu);
@@ -2067,6 +2146,7 @@ export function mountSheet(container, store, opts = {}) {
       off();
       closeMenu(false);
       ac.abort();
+      symPop.el.remove();
       edit = null;
       composing.clear();
       for (const v of views.values()) releaseView(v);
