@@ -53,6 +53,11 @@ function shotJson(/** @type {unknown} */ shot) {
   return isPlainObject(shot) ? objectJson(/** @type {any} */ (shot), orderedKeys(/** @type {any} */ (shot), SHOT_KEYS)) : plainJson(shot);
 }
 
+/** 一行（系统行或交易行）按 5.2 的写法写成紧凑 JSON；冲突摘要比较"改了没有"也用它 */
+export function formatRow(/** @type {unknown} */ row) {
+  return rowJson(row);
+}
+
 function rowJson(/** @type {unknown} */ row) {
   if (!isPlainObject(row)) return plainJson(row);
   const r = /** @type {Record<string, unknown>} */ (row);

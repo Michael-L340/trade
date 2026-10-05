@@ -20,6 +20,18 @@ export const SAVE_MAX_WAIT_MS = 2000;
 export const LOCK_NAME = 'trade-journal-writer';
 export const CHANNEL_NAME = 'trade-journal';
 export const PREF_PREFIX = 'tj_';
+/** meta 仓库里同步状态的键（8.1）：{ ownerUserId, remoteRev, localRev, syncedRev, inflight, lastCheckAt, lastSyncAt, everSignedIn, signedOutByUser } */
+export const SYNC_META_KEY = 'sync';
+/** 同步状态的初始值 */
+export const EMPTY_SYNC_META = Object.freeze({
+  ownerUserId: null, remoteRev: null, localRev: 0, syncedRev: 0, inflight: null,
+  lastCheckAt: null, lastSyncAt: null, everSignedIn: false, signedOutByUser: false,
+});
+
+/** 读出来的同步状态补齐缺的字段 */
+export function syncMetaOf(raw) {
+  return { ...EMPTY_SYNC_META, ...(raw && typeof raw === 'object' ? raw : {}) };
+}
 
 /**
  * 存储层的错误。code：
@@ -132,34 +144,48 @@ function idbBackend(db) {
         if (typeof tx.commit === 'function') tx.commit();
       });
     },
-    /** 在一个事务里：读出已存数据，版本不比本网站新才写入。 */
+    /**
+     * 在一个事务里：读出已存数据，版本不比本网站新才写入；同时把同步状态的 localRev 加 1（8.1：journal 和 meta 同一个事务写）。
+     */
     writeJournal(journal) {
+      return backend.atomic([STORES.journal, STORES.meta], async (t) => {
+        const stored = await t.get(STORES.journal, JOURNAL_KEY);
+        if (isNewer(stored)) throw newerSchemaError(stored);
+        const meta = syncMetaOf(await t.get(STORES.meta, SYNC_META_KEY));
+        t.put(STORES.journal, JOURNAL_KEY, journal);
+        t.put(STORES.meta, SYNC_META_KEY, { ...meta, localRev: meta.localRev + 1 });
+      });
+    },
+    /**
+     * 一个读写事务里做几件事：fn(t) 里用 await t.get(store, key) 读、t.put / t.delete 写。
+     * fn 抛错时整个事务回滚，错误原样抛出。fn 里不要 await 别的东西（IndexedDB 事务会自动提交）。
+     */
+    atomic(stores, fn) {
       return new Promise((resolve, reject) => {
         let tx;
         let refused = null;
+        let result;
         try {
-          tx = backend.tx(STORES.journal, 'readwrite');
+          tx = backend.tx(stores, 'readwrite');
         } catch (err) {
           reject(idbError(err));
           return;
         }
-        const os = tx.objectStore(STORES.journal);
-        const read = os.get(JOURNAL_KEY);
-        read.onsuccess = () => {
-          if (isNewer(read.result)) {
-            refused = newerSchemaError(read.result);
-            tx.abort();
-            return;
-          }
-          try {
-            os.put(journal, JOURNAL_KEY);
-            if (typeof tx.commit === 'function') tx.commit();
-          } catch (err) {
-            refused = idbError(err);
-            try { tx.abort(); } catch (e) { /* 已经结束 */ }
-          }
+        const t = {
+          get: (store, key) => promisify(tx.objectStore(store).get(key)),
+          put: (store, key, value) => { tx.objectStore(store).put(value, key); },
+          delete: (store, key) => { tx.objectStore(store).delete(key); },
         };
-        tx.oncomplete = () => resolve();
+        Promise.resolve()
+          .then(() => fn(t))
+          .then((r) => {
+            result = r;
+            if (typeof tx.commit === 'function') { try { tx.commit(); } catch (e) { /* 已经提交 */ } }
+          }, (err) => {
+            refused = err instanceof StorageError ? err : idbError(err);
+            try { tx.abort(); } catch (e) { /* 已经结束 */ }
+          });
+        tx.oncomplete = () => (refused ? reject(refused) : resolve(result));
         tx.onabort = () => reject(refused || idbError(tx.error));
       });
     },
@@ -190,7 +216,21 @@ function memoryBackend() {
     async writeJournal(journal) {
       const stored = data.get(STORES.journal).get(JOURNAL_KEY);
       if (isNewer(stored)) throw newerSchemaError(stored);
+      const meta = syncMetaOf(data.get(STORES.meta).get(SYNC_META_KEY));
       data.get(STORES.journal).set(JOURNAL_KEY, copy(journal));
+      data.get(STORES.meta).set(SYNC_META_KEY, { ...meta, localRev: meta.localRev + 1 });
+    },
+    async atomic(stores, fn) {
+      // 在副本上做，成功了才落下来
+      const work = new Map(stores.map((s) => [s, new Map(data.get(s))]));
+      const t = {
+        get: async (store, key) => copy(work.get(store).get(key)),
+        put: (store, key, value) => { work.get(store).set(key, copy(value)); },
+        delete: (store, key) => { work.get(store).delete(key); },
+      };
+      const r = await fn(t);
+      for (const [s, m] of work) data.set(s, m);
+      return r;
     },
     close() {},
   };
@@ -353,6 +393,82 @@ function createLocalDb(backend, opts) {
       return backend.deleteMany(STORES.files, Array.from(paths)).catch((e) => { throw idbError(e); });
     },
     async listFiles() { return backend.keys(STORES.files); },
+
+    // ---------- 同步用（store/sync.js） ----------
+
+    /** 一个事务里读出整份数据和同步状态（同步时拿一份前后一致的快照） */
+    async readSnapshot() {
+      await flush();
+      return backend.atomic([STORES.journal, STORES.meta], async (t) => {
+        const journal = await t.get(STORES.journal, JOURNAL_KEY);
+        const meta = syncMetaOf(await t.get(STORES.meta, SYNC_META_KEY));
+        return { journal: journal === undefined ? null : journal, meta };
+      });
+    },
+    async loadSyncMeta() { return syncMetaOf(await backend.get(STORES.meta, SYNC_META_KEY)); },
+    /** 改同步状态：fn(旧状态) 返回新状态（读改写在一个事务里）。返回新状态。 */
+    async updateSyncMeta(fn) {
+      const err = guard();
+      if (err) throw err;
+      return backend.atomic([STORES.meta], async (t) => {
+        const next = syncMetaOf(fn(syncMetaOf(await t.get(STORES.meta, SYNC_META_KEY))));
+        t.put(STORES.meta, SYNC_META_KEY, next);
+        return next;
+      });
+    },
+    /**
+     * 同步写回：一个事务里写 journal（可选）、base（可选）和同步状态。
+     * expectLocalRev 是数字时，本机的 localRev 已经不是它（这期间又改过）就不写，抛 StorageError('CHANGED')。
+     * metaPatch 是函数（旧状态 → 新状态）或对象（合并进去）。不改 localRev 以外的计数时，localRev 原样保留。
+     */
+    async applySync({ journal, base, metaPatch, expectLocalRev } = {}) {
+      const err = guard();
+      if (err) throw err;
+      await flush();
+      return backend.atomic([STORES.journal, STORES.base, STORES.meta], async (t) => {
+        const meta = syncMetaOf(await t.get(STORES.meta, SYNC_META_KEY));
+        if (typeof expectLocalRev === 'number' && meta.localRev !== expectLocalRev) {
+          throw new StorageError('CHANGED', '同步期间本机又有修改');
+        }
+        if (journal !== undefined) {
+          const stored = await t.get(STORES.journal, JOURNAL_KEY);
+          if (isNewer(stored)) throw newerSchemaError(stored);
+          t.put(STORES.journal, JOURNAL_KEY, journal);
+        }
+        if (base !== undefined) t.put(STORES.base, JOURNAL_KEY, base);
+        const next = syncMetaOf(typeof metaPatch === 'function' ? metaPatch(meta) : { ...meta, ...(metaPatch || {}) });
+        t.put(STORES.meta, SYNC_META_KEY, next);
+        return next;
+      });
+    },
+    /** 上次和云端对上的那份 doc（冲突时算差异摘要用）；没有返回 null */
+    async loadBase() {
+      const b = await backend.get(STORES.base, JOURNAL_KEY);
+      return b === undefined ? null : b;
+    },
+    /** 存一份冲突留底或恢复前留底：{ at, source: 'local'|'remote'|'restore', doc }。返回它的键。 */
+    async addConflict(entry) {
+      const err = guard();
+      if (err) throw err;
+      const key = String(entry.at) + '-' + Math.random().toString(36).slice(2, 8);
+      await backend.put(STORES.conflicts, key, { ...entry, key });
+      return key;
+    },
+    /** 全部留底，新的在前 */
+    async listConflicts() {
+      const keys = await backend.keys(STORES.conflicts);
+      const out = [];
+      for (const k of keys) {
+        const v = await backend.get(STORES.conflicts, k);
+        if (v) out.push({ ...v, key: k });
+      }
+      return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    },
+    async deleteConflict(key) {
+      const err = guard();
+      if (err) throw err;
+      return backend.delete(STORES.conflicts, key);
+    },
 
     /** 写掉还在等待的修改后关闭 */
     async close() {
@@ -555,6 +671,8 @@ export function connectStore(store, db, opts = {}) {
     saveNow: () => save(true),
     /** 立刻从本机存储重读 */
     reload,
+    /** 通知其他标签页从本机存储重读（同步把云端的数据写进本机之后用） */
+    notifyOthers() { channel.post({ type: 'saved', rev: -1 }); },
     stop() {
       stopped = true;
       off();

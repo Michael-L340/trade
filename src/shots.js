@@ -116,6 +116,7 @@ function context(ctx) {
     imageOptions: ctx.imageOptions,
     now: typeof ctx.now === 'function' ? ctx.now : () => new Date(),
     onError: typeof ctx.onError === 'function' ? ctx.onError : null,
+    fetchRemote: typeof ctx.fetchRemote === 'function' ? ctx.fetchRemote : null,
   };
 }
 
@@ -259,6 +260,21 @@ async function readRecord(c, path) {
   if (!c.db || typeof c.db.getFile !== 'function') return null;
   const rec = await c.db.getFile(path);
   return rec || null;
+}
+
+/**
+ * 本机没有的截图：登录了就从云端桶里取（ctx.fetchRemote，由同步模块下载并存进 IndexedDB，7.8）。
+ * 示例模式不取。取不到返回 null。
+ */
+async function readOrFetch(c, path) {
+  const rec = await readRecord(c, path);
+  if (rec || !c.fetchRemote || isDemo(c)) return rec;
+  try {
+    const blob = await c.fetchRemote(path);
+    return blob ? { blob, type: blob.type } : null;
+  } catch (err) {
+    return null;
+  }
 }
 
 /** 记录里的 Blob。类型丢了用记录里的 type 补上；存的是 ArrayBuffer 时按 type 重建（9.4 第 14 条） */
@@ -424,7 +440,7 @@ export function setShotLabel(ctx, tradeId, shotId, label) {
 export async function getShotBlob(ctx, path) {
   const c = context(ctx);
   if (typeof path !== 'string' || !path) return null;
-  return recordBlob(await readRecord(c, path));
+  return recordBlob(await readOrFetch(c, path));
 }
 
 /**
@@ -451,7 +467,7 @@ export function createUrlCache(ctx) {
     entry.promise = (async () => {
       let blob = null;
       try {
-        blob = recordBlob(await readRecord(c, path));
+        blob = recordBlob(await readOrFetch(c, path));
       } catch (err) {
         blob = null;
       }

@@ -71,6 +71,55 @@ export function cleanText(s) {
   return t.replace(/[\u{D800}-\u{DFFF}]/gu, '\u{FFFD}'); // u 模式下只会匹配到孤立的代理项
 }
 
+/** 含 U+0000 或孤立代理项（半个 emoji）：PostgREST 会以 22P05、22P02 拒收整份保存（5.1） */
+export function hasBadText(s) {
+  return typeof s === 'string' && (s.indexOf('\x00') !== -1 || /[\u{D800}-\u{DFFF}]/u.test(s));
+}
+
+/** 上传前把整份数据里所有字符串都过一遍 cleanText（包括不认识的字段）。不改动入参。 */
+export function deepCleanText(v) {
+  if (typeof v === 'string') return cleanText(v);
+  if (Array.isArray(v)) return v.map(deepCleanText);
+  if (isPlainObject(v)) {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = deepCleanText(v[k]);
+    return out;
+  }
+  return v;
+}
+
+function deepHasBadText(v) {
+  if (typeof v === 'string') return hasBadText(v);
+  if (Array.isArray(v)) return v.some(deepHasBadText);
+  if (isPlainObject(v)) return Object.keys(v).some((k) => deepHasBadText(v[k]));
+  return false;
+}
+
+const TEXT_FIELD_LABEL = { name: '系统名称', desc: '系统说明', symbol: '品种', reason: '开仓理由', note: '备注', date: '日期' };
+
+/**
+ * 找出第一处存不进去的字符（8.4：22P05、22P02 时指给用户看）。
+ * @returns {null | {rowIndex: number, id: string, tradeNo: number|null, field: string, label: string}}
+ *   tradeNo 是交易的顺序号（系统行为 null）；field 是字段名；label 是给人看的字段名
+ */
+export function findBadText(journal) {
+  const rows = journal && Array.isArray(journal.rows) ? journal.rows : [];
+  let no = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (!isPlainObject(r)) continue;
+    if (r.type === 'trade') no += 1;
+    for (const k of Object.keys(r)) {
+      const v = r[k];
+      const bad = deepHasBadText(v);
+      if (bad) {
+        return { rowIndex: i, id: String(r.id || ''), tradeNo: r.type === 'trade' ? no : null, field: k, label: TEXT_FIELD_LABEL[k] || k };
+      }
+    }
+  }
+  return null;
+}
+
 // ---------- 新建行 ----------
 
 /**
