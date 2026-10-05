@@ -2,21 +2,32 @@
 
 只给自己用的交易日志网站。像 Excel 一样一行记一笔交易；换交易系统时插入一整行"系统行"，之后的交易记在它下面、各系统单独统计；自动算胜率、实际盈亏比、期望值等，并画累计 R 曲线。红色表示盈利，绿色表示亏损。
 
-纯静态网页（原生 HTML/CSS/JavaScript，没有构建步骤、没有框架、不装依赖），部署在 GitHub Pages：<https://michael-l340.github.io/trade-journal/>。
+纯静态网页（原生 HTML/CSS/JavaScript，没有构建步骤、没有框架、不装依赖），将来部署在 GitHub Pages：<https://michael-l340.github.io/trade-journal/>。
 
-数据只保存在你当前这个浏览器里（IndexedDB）。换浏览器、换电脑或清除网站数据都会看不到原来的记录，所以请在设置页定期"导出 journal.json"备份，需要时再"从 journal.json 恢复"。
+数据只保存在你当前这个浏览器里（IndexedDB）。换浏览器、换电脑、清除网站数据或用无痕窗口都看不到原来的记录，所以请在设置页定期"导出 journal.json"备份，需要时再"从 journal.json 恢复"。
+
+## 怎么用
+
+- 在表格最后一行（空行）里填盈亏比，这一笔就建好了，止盈金额立刻算出；出场后回来点"结果"格选盈或亏。
+- 日期默认今天，品种和止损金额沿用上一笔，方向默认"多"（点一下切换）。
+- 换交易系统：点表格下面的"＋ 换交易系统（插入系统行）"，或在某一笔的行号上点右键"在上方插入系统行"。
+- 点行号打开单笔详情，写开仓理由和备注。
+- 还没有交易时，表格下面有"看看示例数据"：载入一份编好的示例随便试，不会保存，点顶上的"退出示例"回到自己的数据。
+- 同时开了两个标签页时，后打开的那个只能看（顶上有提示），关掉前一个后它自动变成可以修改。
 
 ## 本地预览
 
 ES 模块不能双击 `index.html` 用 `file://` 打开，要先起一个本地服务器。在这个目录里运行：
 
 ```bash
-python3 -m http.server
+python3 -m http.server 8000 --bind 127.0.0.1
 ```
 
-然后用浏览器打开 <http://localhost:8000/>。
+然后用浏览器打开 <http://localhost:8000/>。看完在终端按 Ctrl+C 关掉服务器。
 
 如果浏览器控制台提示 MIME type 错误（Windows 上的 Python 偶尔会把 `.js` 当成 `text/plain`），改在 WSL 里运行同一条命令。
+
+本地预览的数据存在 `localhost:8000` 这个地址下，和将来 GitHub Pages 上的网站是两份，互不影响。
 
 ## 跑测试
 
@@ -26,11 +37,44 @@ python3 -m http.server
 node --test tests/
 ```
 
-- `tests/index.js` 只负责把所有 `*.test.js` 汇总起来，让这条命令在 Node 22 上也能直接用。
-- `package.json` 只是告诉 Node 这些 `.js` 文件是 ES 模块，里面没有任何依赖。
-- `fixtures/sample-journal.json` 是交接文档附录 A 的示例数据，`fixtures/sample-expected.json` 是附录 B 的预期结果，计算模块的测试逐项对照它们。
+- 测的是不碰页面的部分：计算（附录 A 的示例数据逐项对照附录 B 的预期结果）、显示格式和输入解析、数据校验和序列化、CSV、内存状态、本机存储（用 `tests/fakes.js` 里的假 IndexedDB 和 Web Locks）、表格的键盘规则、设置页的检查逻辑。
+- `tests/index.js` 只负责把所有 `*.test.js` 汇总起来，让这条命令在 Node 22 上也能直接用；`package.json` 只是告诉 Node 这些 `.js` 文件是 ES 模块，里面没有任何依赖。
+
+## 文件结构
+
+```
+index.html            页面骨架（内容安全策略、顶栏、概览、表格、设置页、详情弹层的位置）
+styles.css            全部样式（第一部分取自认可过的预览稿）
+favicon.svg           浏览器标签页上的小图标
+.nojekyll             让 GitHub Pages 不经过 Jekyll 处理
+src/
+  main.js             启动和路由：打开本机存储、选出唯一写者、挂上各部分界面、#/ 和 #/settings
+  state.js            内存状态和全部修改操作（界面只能通过它改数据）
+  model.js            id、新建行、文字清洗、数据校验、版本迁移、固定格式的 journal.json
+  calc.js             计算：单笔止盈/盈亏/R、按系统分段、统计、样本提示
+  format.js           数字和日期的显示与解析（负号用 −）
+  csv.js              导出 CSV（Excel 打开中文不乱码）
+  store/localdb.js    IndexedDB 存取、自动保存、多标签页（Web Locks、BroadcastChannel）
+  ui/sheet.js         交易表：格子编辑、键盘、中文输入法、系统行、行操作和撤销
+  ui/summary.js       顶部统计
+  ui/chart.js         累计 R 曲线（SVG）
+  ui/detail.js        单笔详情弹层
+  ui/settings.js      设置页：金额单位、导出/恢复 journal.json、导出 CSV
+  ui/toast.js         底部提示（可撤销）和页内确认框
+fixtures/
+  sample-journal.json 示例数据（交接文档附录 A），"看看示例数据"和测试都用它
+  sample-expected.json 附录 B 的预期结果
+tests/                node --test 的测试
+```
+
+## 还没做的功能
+
+- 截图：粘贴、压缩、缩略图、详情里看大图。现在截图格和详情里只有占位。
+- 同步到 GitHub 私有仓库（设置页的连接、测试连接、用量、冲突处理）。现在数据只在这个浏览器里。
+- 部署到 GitHub Pages 的分步说明（第 4 步收尾时补上）。
 
 ## 注意
 
 - 这是公开仓库：不要把导出的 `journal.json`、CSV 或截图放进这个目录（`.gitignore` 已经挡掉了常见的文件名）。
-- 浏览器的 localStorage 只用来放设置，键名一律以 `tj_` 开头。
+- 浏览器的 localStorage 只用来放设置，键名一律以 `tj_` 开头；交易数据只在 IndexedDB 里。
+- 网站更新后如果看到的还是旧版本，按 Ctrl+F5 强制刷新；页面最下面的版本号可以用来确认。
