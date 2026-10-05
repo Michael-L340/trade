@@ -57,13 +57,15 @@ test('恢复：不是 JSON、数据比网站新、字段不合规时不恢复，
   assert.match(invalid.message, /2 处/);
 });
 
-test('恢复：第一行不是系统行时补一个；文字里的 U+0000 去掉', () => {
+test('恢复：第一行不是系统行时整份拒收；文字里的 U+0000 去掉', () => {
   const j = sample();
   j.rows = j.rows.slice(1); // 去掉第一行的系统行
-  j.rows[0].note = 'a\u{0000}b';
   const r = checkRestoreText(JSON.stringify(j));
-  assert.equal(r.ok, true);
-  assert.equal(r.journal.rows[0].type, 'system');
-  assert.equal(r.journal.rows[1].note, 'ab');
-  assert.deepEqual(r.counts, { trades: 16, systems: 2 });
+  assert.equal(r.ok, false);
+  const k = sample();
+  k.rows[1].note = 'a\u{0000}b';
+  const r2 = checkRestoreText(JSON.stringify(k));
+  assert.equal(r2.ok, true);
+  assert.equal(r2.journal.rows[1].note, 'ab');
+  assert.deepEqual(r2.counts, { trades: 16, systems: 2 });
 });

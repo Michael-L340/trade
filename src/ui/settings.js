@@ -387,8 +387,8 @@ export function mountSettings(container, store, opts = {}) {
       `文件"${f.name}"里：${res.counts.trades} 笔交易、${res.counts.systems} 个系统，金额单位"${res.journal.currency}"`,
       `你现在的数据：${mine.trades} 笔交易、${mine.systems} 个系统，会被整份替换，不能撤销`,
       st.ui.demo
-        ? '要先留一份现在的数据：取消，退出示例后点"导出 journal.json"'
-        : '要先留一份现在的数据：取消，先点"导出 journal.json"',
+        ? '替换前会自动下载一份你现在的数据'
+        : '替换前会自动下载一份你现在的数据（文件名以"恢复前自动备份"开头）',
     ];
     if (st.ui.demo) details.push('恢复后会退出示例模式');
     const ok = await confirmDialog({
@@ -399,6 +399,15 @@ export function mountSettings(container, store, opts = {}) {
       initialFocus: 'cancel',
     });
     if (!ok) return;
+    try {
+      const before = store.realJournal();
+      if (before && Array.isArray(before.rows) && before.rows.some((r) => r && r.type === 'trade')) {
+        downloadText('恢复前自动备份-' + journalFileName(new Date(), false), serialize(before), JSON_MIME);
+      }
+    } catch (err) {
+      showError('没能先备份现在的数据，已取消恢复', err && err.message ? err.message : String(err));
+      return;
+    }
     let done = false;
     try {
       done = store.actions.replaceJournal(res.journal);

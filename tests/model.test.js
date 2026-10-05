@@ -284,3 +284,12 @@ test('serialize：数字键和空 rows', () => {
   assert.ok(t.includes('{"type":"system","id":"sys_1","name":"","desc":"","0":"x"}'), '数字样子的键也排在已知字段后面');
   assert.equal(serialize({ schemaVersion: 1, currency: '$', rows: [] }), '{\n  "schemaVersion": 1,\n  "currency": "$",\n  "rows": []\n}\n');
 });
+
+test('恢复：第一行不是系统行或没有行时整份拒收', async () => {
+  const { parseJournalText } = await import('../src/model.js');
+  const bad1 = parseJournalText(JSON.stringify({ schemaVersion: 1, currency: '$', rows: [] }));
+  assert.equal(bad1.ok, false);
+  const bad2 = parseJournalText(JSON.stringify({ schemaVersion: 1, currency: '$', rows: [{ type: 'trade', id: 't_1', date: '2026-09-01', symbol: 'X', direction: 'long', rr: 2, risk: 100, result: null, pnlOverride: null, reason: '', note: '', shots: [] }] }));
+  assert.equal(bad2.ok, false);
+  assert.match(bad2.message, /第 1 行/);
+});
