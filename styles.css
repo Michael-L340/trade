@@ -452,3 +452,11 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .kept-item { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
 .kept-item span { font-family: 'IBM Plex Mono', 'Noto Sans SC', monospace; }
 .conflict-dialog { max-width: min(560px, calc(100% - 32px)); }
+
+/* ---------- 短内容的列居中（2026-10-05 用户要求）：方向、盈亏比、止损、止盈、结果、盈亏、截图 ---------- */
+.sheet td.num { text-align: center; }
+.sheet .cell-input[data-col="direction"], .sheet .cell-input[data-col="rr"], .sheet .cell-input[data-col="risk"],
+.sheet .cell-input[data-col="tp"], .sheet .cell-input[data-col="result"], .sheet .cell-input[data-col="pnl"] { text-align: center; }
+.sheet td:has(> [data-col="direction"]), .sheet td:has(> [data-col="result"]), .sheet td:has(> [data-col="shots"]) { text-align: center; }
+.sheet [data-col="shots"].shot-btn, .sheet .shot-btn[data-col="shots"] { justify-content: center; }
+.sheet td > .shot-empty, .sheet .shot-btn > .shot-empty { margin: 0 auto; }
