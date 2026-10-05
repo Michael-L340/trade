@@ -545,30 +545,38 @@ export const ready = boot().catch((err) => {
   return null;
 });
 
-/** 更新按钮：打开页面和切回页面时（最多 10 分钟一次）查线上版本，比这个页面新就在顶栏显示"更新到新版本"；页脚"检查更新"手动查 */
+/** 顶栏「更新」按钮：一直显示。打开页面、切回页面时（最多 10 分钟一次）查线上版本，比这个页面新就变成蓝色「更新到 x.y.z」。
+ *  点了：线上更新（或查不到）就重新下载全部文件并刷新；已经是最新就提示一下。 */
 function setupUpdate() {
   const btn = document.getElementById('update-app');
-  const check = document.getElementById('check-update');
   let lastAt = 0;
-  async function look(manual) {
+  let busy = false;
+  async function look() {
     lastAt = Date.now();
     const latest = await fetchLatestVersion();
-    if (latest && isNewer(latest, APP_VERSION)) {
-      btn.textContent = `更新到 ${latest}`;
-      btn.hidden = false;
-      if (manual) showToast(`有新版本 ${latest}，点右上角"更新到 ${latest}"`);
-    } else if (manual) {
-      showToast(latest ? `已经是最新版本 ${APP_VERSION}` : '没连上网站，稍后再试');
-    }
+    const newer = !!latest && isNewer(latest, APP_VERSION);
+    if (!busy) btn.textContent = newer ? `更新到 ${latest}` : '更新';
+    btn.classList.toggle('primary', newer);
+    return latest;
   }
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
     btn.disabled = true;
+    btn.textContent = '正在检查…';
+    const latest = await look();
+    if (latest && !isNewer(latest, APP_VERSION)) {
+      busy = false;
+      btn.disabled = false;
+      btn.textContent = '更新';
+      showToast(`已经是最新版本 ${APP_VERSION}`);
+      return;
+    }
     btn.textContent = '正在更新…';
     reloadFresh();
   });
-  check.addEventListener('click', () => { look(true); });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && Date.now() - lastAt > 10 * 60 * 1000) look(false);
+    if (document.visibilityState === 'visible' && Date.now() - lastAt > 10 * 60 * 1000) look();
   });
-  look(false);
+  look();
 }
