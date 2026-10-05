@@ -49,6 +49,21 @@ node --test tests/
 - 测的是不碰页面的部分：计算（附录 A 的示例数据逐项对照附录 B 的预期结果）、显示格式和输入解析、数据校验和序列化、CSV、内存状态、本机存储（用 `tests/fakes.js` 里的假 IndexedDB 和 Web Locks）、表格的键盘规则、设置页的检查逻辑、截图的缩放规划和降质步骤、截图增删和撤销（假的图片处理和假 IndexedDB）、Blob 地址的释放。
 - `tests/index.js` 只负责把所有 `*.test.js` 汇总起来，让这条命令在 Node 22 上也能直接用；`package.json` 只是告诉 Node 这些 `.js` 文件是 ES 模块，里面没有任何依赖。
 
+## 版本号和发布
+
+- 版本号是三段式，写在 `package.json` 的 `version`，`src/version.js` 是给浏览器读的同一个数（测试检查两处一致）。页面底部、设置页"关于"都显示它；每次保存会把它写进数据的 `appVersion`。
+- 版本守卫：读到 `appVersion` 比这个页面新的数据（开了几天没刷新的旧标签页），或者 `schemaVersion` 更大的数据，这一页只读，顶上显示"网站已更新，刷新页面后才能保存"。按 Ctrl+F5 刷新就好，本机修改不会丢。
+- GitHub Pages 从 `main` 分支根目录发布：**推到 `main` 就是上线**。平时的改动提交在 `dev` 分支，不会上线。
+- **发布前要先问用户，用户点头后才运行**：
+
+  ```bash
+  bash scripts/deploy.sh          # 第三位 +1，例如 0.2.0 → 0.2.1
+  bash scripts/deploy.sh minor    # 大功能：第二位 +1，例如 0.2.5 → 0.3.0
+  ```
+
+  脚本按顺序：检查工作区干净、当前提交包含线上的 `main` → 跑测试 → 改版本号、提交、打 tag → `git push origin HEAD:main --follow-tags` → 等 Pages 构建完成、确认网站 200 并且线上版本号是新的。哪一步不过就停下。不要手改版本号。
+- 改坏了用 `git revert` 生成新提交，再发布一次（版本号照常 +1）；不要 `reset` 加 force push。
+
 ## 文件结构
 
 ```
@@ -57,6 +72,8 @@ styles.css            全部样式（第一部分取自认可过的预览稿）
 favicon.svg           浏览器标签页上的小图标
 .nojekyll             让 GitHub Pages 不经过 Jekyll 处理
 src/
+  version.js          网站版本号（和 package.json 一致，发布脚本一起改）
+  journal-format.js   journal.json 的固定写法（导出、算哈希、备份共用）
   main.js             启动和路由：打开本机存储、选出唯一写者、挂上各部分界面、#/ 和 #/settings
   state.js            内存状态和全部修改操作（界面只能通过它改数据）
   model.js            id、新建行、文字清洗、数据校验、版本迁移、固定格式的 journal.json
@@ -72,8 +89,10 @@ src/
   ui/detail.js        单笔详情弹层：截图大图、缩略图、标签、删除和撤销、粘贴/选文件/拖放
   ui/settings.js      设置页：金额单位、导出/恢复 journal.json、导出 CSV
   ui/toast.js         底部提示（可撤销）和页内确认框
+scripts/deploy.sh     发布脚本（用户点头后才运行）
 fixtures/
   sample-journal.json 示例数据（交接文档附录 A），"看看示例数据"和测试都用它
+  sample-journal.formatted.json 附录 A 按固定格式写出的结果（4,831 字节），格式的金标准
   sample-expected.json 附录 B 的预期结果
 tests/                node --test 的测试
 ```

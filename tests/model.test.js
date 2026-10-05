@@ -18,7 +18,7 @@ const REPLACEMENT = '\u{FFFD}';
 
 test('版本常量', () => {
   assert.equal(SCHEMA_VERSION, 1);
-  assert.match(APP_VERSION, /^\d+\.\d+\.\d+$/);
+  assert.match(APP_VERSION, /^\d+\.\d+\.\d+$/, '三段式版本号，和 package.json 一致（tests/version.test.js）');
   assert.equal(DEFAULT_CURRENCY, '$');
 });
 
@@ -252,9 +252,9 @@ test('serialize：固定格式（每个 row 一行、键顺序固定、末尾换
     '  "currency": "$",',
     '  "rows": [',
     '    {"type":"system","id":"sys_a","name":"趋势","desc":"说明","createdAt":"2026-09-01T08:00:00Z"},',
-    '    {"type":"trade","id":"t_1","date":"2026-09-10","symbol":"XAUUSD","direction":"long","rr":2,"risk":100,"result":"win","pnlOverride":null,"reason":"理由，\\"引号\\"","note":"","shots":[{"id":"sh_1","label":"open","file":"shots/t_1/sh_1.webp","width":1920,"height":1080,"extra":{"a":1,"b":2}}],"alpha":[3,{"x":2,"y":1}],"zeta":1}',
+    '    {"type":"trade","id":"t_1","date":"2026-09-10","symbol":"XAUUSD","direction":"long","rr":2,"risk":100,"result":"win","pnlOverride":null,"reason":"理由，\\"引号\\"","note":"","shots":[{"id":"sh_1","label":"open","file":"shots/t_1/sh_1.webp","width":1920,"height":1080,"extra":{"b":2,"a":1}}],"zeta":1,"alpha":[3,{"y":1,"x":2}]}',
     '  ],',
-    '  "zzz": {"a":2,"b":1}',
+    '  "zzz": {"b":1,"a":2}',
     '}',
     '',
   ].join('\n');

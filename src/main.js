@@ -16,7 +16,7 @@
 // 不碰 localStorage；全部用 createElement / textContent，不拼 HTML。
 
 import { createStore } from './state.js';
-import { APP_VERSION, SCHEMA_VERSION } from './model.js';
+import { APP_VERSION, SCHEMA_VERSION, versionGuard } from './model.js';
 import { claimWriter, connectStore, openLocalDb, requestPersist } from './store/localdb.js';
 import { mountSummary } from './ui/summary.js';
 import { mountChart } from './ui/chart.js';
@@ -118,6 +118,8 @@ async function boot() {
   const initialReadOnly = env.loadError ? 'load-failed' : writer.isWriter ? null : 'other-tab';
   try {
     store = createStore(env.loadError ? null : raw, { readOnly: initialReadOnly });
+    // 版本守卫（5.1）：本机数据是更新版本的网站写的，照常显示，但只读、提示刷新
+    if (raw && versionGuard(raw)) store.actions.setReadOnly('newer-schema');
   } catch (err) {
     if (err && err.code === 'NEWER_SCHEMA') {
       store = createStore(null, { readOnly: 'newer-schema' });
@@ -230,12 +232,13 @@ async function boot() {
 
   // ---------- 顶栏的保存状态（7.11）和横幅 ----------
   function saveStateView(ui) {
-    if (ui.demo) return { key: 'demo', text: '示例数据：不会保存', cls: '', title: '示例模式下的修改只在这个页面里，退出示例或刷新后就没了' };
-    if (ui.readOnly === 'other-tab') return { key: 'other-tab', text: '只读：已在另一个标签页打开', cls: 'warn', title: '在那个标签页里修改；关掉它以后这里会自动变成可以修改' };
+    if (ui.demo) return { key: 'demo', text: '示例数据，不保存', cls: '', title: '示例模式下的修改只在这个页面里，退出示例或刷新后就没了' };
+    if (ui.readOnly === 'other-tab') return { key: 'other-tab', text: '另一个标签页正在编辑，这里只读', cls: 'warn', title: '在那个标签页里修改；关掉它以后这里会自动变成可以修改' };
+    if (ui.readOnly === 'newer-schema') return { key: 'newer', text: '网站已更新，刷新页面后才能保存', cls: 'warn', title: '按 Ctrl+F5 刷新页面，加载最新版网站' };
     if (ui.readOnly) return { key: 'ro:' + ui.readOnly, text: '只读：这一页不会保存', cls: 'warn', title: readOnlyMessage(ui.readOnly) };
     if (env.saveError) return { key: 'error', text: '保存失败，点击重试', cls: 'error', retry: true, title: messageOf(env.saveError) };
     if (db.kind === 'memory') return { key: 'memory', text: '只在内存里，刷新会丢（点击去设置导出）', cls: 'warn', link: true, title: db.fallbackReason || '' };
-    return { key: 'local', text: '只保存在这个浏览器里（点击去设置）', cls: '', link: true, title: '数据只存在这个浏览器的 IndexedDB 里，没有同步到别处。到设置页可以导出 journal.json 备份。' };
+    return { key: 'local', text: '只保存在这个浏览器里（点击登录）', cls: '', link: true, title: '数据只存在这个浏览器的 IndexedDB 里，没有同步到别处。到设置页可以导出 journal.json 备份。' };
   }
 
   let saveKey = null;

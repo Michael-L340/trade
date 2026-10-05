@@ -325,8 +325,8 @@ export function segmentHint(n) {
 
 /** 只读时给用户看的原因 */
 export function readOnlyMessage(reason) {
-  if (reason === 'other-tab') return '只读：网站已在另一个标签页打开，请在那个标签页里修改';
-  if (reason === 'newer-schema') return '只读：数据是更新版本的网站保存的，请按 Ctrl+F5 刷新页面';
+  if (reason === 'other-tab') return '另一个标签页正在编辑，这里只读';
+  if (reason === 'newer-schema') return '网站已更新，刷新页面后才能保存';
   return '只读：现在不能修改';
 }
 
@@ -1109,8 +1109,8 @@ export function mountSheet(container, store, opts = {}) {
   function refreshFooter() {
     const st = store.get();
     const can = canEdit();
-    setAttr(addBtn, 'aria-disabled', can ? null : 'true');
-    setAttr(addBtn, 'title', can ? null : readOnlyMessage(st.ui.readOnly));
+    // 只读时（另一个标签页在写、版本守卫拦着）不显示"换交易系统"（7.11）
+    setHidden(addBtn, !can);
     const auto = !st.ui.demo && st.derived.grouped.trades.length === 0;
     setHidden(demoBtn, !(onLoadDemo && (demoOverride === null ? auto : demoOverride)));
     let text;
@@ -1125,6 +1125,8 @@ export function mountSheet(container, store, opts = {}) {
   function applyEditable(view, can = canEdit()) {
     const inputs = view.kind === 'system' ? [view.name, view.desc] : LINE_TEXT_COLUMNS.map((col) => view.cells[col].input);
     for (const input of inputs) if (input.readOnly !== !can) input.readOnly = !can;
+    // 只读时隐藏空行（7.11）
+    if (view.kind === 'empty') setHidden(view.tr, !can);
     if (view.kind !== 'system') {
       setAttr(view.cells.direction.btn, 'aria-disabled', can ? null : 'true');
       setAttr(view.cells.result.btn, 'aria-disabled', can ? null : 'true');
@@ -1495,8 +1497,20 @@ export function mountSheet(container, store, opts = {}) {
   }
 
   // ---------- 事件 ----------
+  /** 切窗口时留着没交的那一格：现在交掉（失焦时该做的事） */
+  function settleAway() {
+    const s = edit;
+    if (!s || !s.awayFromWindow) return;
+    s.awayFromWindow = false;
+    commitSession(s);
+    if (edit === s) edit = null;
+    if (s.input.isConnected) refreshView(viewOf(s.input));
+  }
+
   function onFocusIn(e) {
     const t = e.target;
+    if (edit && edit.input !== t && edit.awayFromWindow) settleAway(); // 切窗口回来后点了别的格子：先把原来那格交掉
+    if (edit && edit.input === t) edit.awayFromWindow = false; // 切窗口回来，焦点回到原来的格子：接着编辑
     if (isCellInput(t) && !(edit && edit.input === t)) startSession(t);
     const view = viewOf(t);
     if (view && view.kind === 'empty') renderEmpty(view, store.get()); // 日期按此刻的"今天"
@@ -1505,6 +1519,12 @@ export function mountSheet(container, store, opts = {}) {
   function onFocusOut(e) {
     const t = e.target;
     if (!edit || edit.input !== t) return;
+    // 切到别的窗口（document.hasFocus() 为 false）：先不提交也不恢复，等回来再处理。
+    // 回来时焦点通常回到这一格（onFocusIn 接着编辑）；落到别处时由 onFocusIn / 窗口的 focus 事件交掉。
+    if (typeof doc.hasFocus === 'function' && !doc.hasFocus() && !composing.has(t)) {
+      edit.awayFromWindow = true;
+      return;
+    }
     const s = edit;
     if (composing.has(t)) composing.delete(t);
     commitSession(s);
@@ -1897,6 +1917,12 @@ export function mountSheet(container, store, opts = {}) {
 
   // ---------- 接上事件 ----------
   listen(tbody, 'focusin', onFocusIn);
+  // 切窗口回来：焦点没回到原来那一格（落到了表格外面），就把那一格交掉
+  listen(win, 'focus', () => {
+    setTimeout(() => {
+      if (edit && edit.awayFromWindow && doc.activeElement !== edit.input) settleAway();
+    }, 0);
+  });
   listen(tbody, 'focusout', onFocusOut);
   listen(tbody, 'input', onInput);
   listen(tbody, 'compositionstart', (e) => {

@@ -9,7 +9,7 @@
 //   前一个写者关掉后自动接手。
 // - localStorage 只放设置：getPref / setPref / removePref，键名一律加 tj_ 前缀，从不调用 localStorage.clear()。
 
-import { SCHEMA_VERSION } from '../model.js';
+import { SCHEMA_VERSION, stampAppVersion, versionGuard } from '../model.js';
 
 export const DB_NAME = 'tj-journal';
 export const DB_VERSION = 1;
@@ -42,10 +42,11 @@ function idbError(err) {
   return new StorageError('IDB', msg, err);
 }
 
-const newerSchemaError = (v) => new StorageError('NEWER_SCHEMA', `浏览器里的数据是更新版本的网站保存的（数据版本 ${v}），本页面不会覆盖它。请按 Ctrl+F5 刷新页面。`);
+const newerSchemaError = (stored) => new StorageError('NEWER_SCHEMA', `浏览器里的数据是更新版本的网站保存的（数据版本 ${stored.schemaVersion}${stored.appVersion ? '，网站版本 ' + stored.appVersion : ''}；本页面认到数据版本 ${SCHEMA_VERSION}），本页面不会覆盖它。网站已更新，请按 Ctrl+F5 刷新页面后再保存。`);
 
+/** 已存的数据是更新版本的网站写的（版本守卫 5.1：schemaVersion 更大，或 appVersion 更新） */
 function isNewer(stored) {
-  return !!stored && typeof stored.schemaVersion === 'number' && stored.schemaVersion > SCHEMA_VERSION;
+  return !!stored && versionGuard(stored) !== null;
 }
 
 // ---------- 后端：IndexedDB ----------
@@ -146,7 +147,7 @@ function idbBackend(db) {
         const read = os.get(JOURNAL_KEY);
         read.onsuccess = () => {
           if (isNewer(read.result)) {
-            refused = newerSchemaError(read.result.schemaVersion);
+            refused = newerSchemaError(read.result);
             tx.abort();
             return;
           }
@@ -188,7 +189,7 @@ function memoryBackend() {
     async deleteMany(store, keys) { for (const key of keys) data.get(store).delete(key); },
     async writeJournal(journal) {
       const stored = data.get(STORES.journal).get(JOURNAL_KEY);
-      if (isNewer(stored)) throw newerSchemaError(stored.schemaVersion);
+      if (isNewer(stored)) throw newerSchemaError(stored);
       data.get(STORES.journal).set(JOURNAL_KEY, copy(journal));
     },
     close() {},
@@ -485,7 +486,8 @@ export function connectStore(store, db, opts = {}) {
     if (stopped || ui.demo || ui.readOnly || !ui.dirty) return Promise.resolve(false);
     const rev = ui.localRev;
     lastRequested = rev;
-    const done = db.saveJournal(journal, rev).then(
+    // 每次保存把 appVersion 写成本网站的版本（5.1 版本守卫）
+    const done = db.saveJournal(stampAppVersion(journal), rev).then(
       (writtenRev) => {
         if (writtenRev !== rev) return false; // 同一批里更新的那次保存会处理
         store.actions.markSaved(rev);
@@ -515,6 +517,7 @@ export function connectStore(store, db, opts = {}) {
     if (raw == null || stopped) return;
     try {
       store.actions.replaceJournal(raw, { external: true });
+      if (versionGuard(raw)) store.actions.setReadOnly('newer-schema');
     } catch (err) {
       onNewer(err);
       report(err);

@@ -6,7 +6,10 @@ export const TOAST_MS = 2600;
 /** 带撤销按钮时，提示停留的毫秒数（7.6：保留 10 秒） */
 export const UNDO_MS = 10000;
 
-let active = null; // 正在显示的提示
+// 两个位置：main（页面底部）和 aux（main 上面一格）。
+// 带"撤销"的提示占 main；它显示着的时候来了普通提示，普通提示放到 aux，不把撤销顶掉（10 秒内还能撤销）。
+/** @type {{main: any, aux: any}} */
+const slots = { main: null, aux: null };
 
 function currentDocument() {
   return typeof document !== 'undefined' ? document : null;
@@ -22,22 +25,25 @@ function isEditable(el) {
   return !el.readOnly && !el.disabled && !/^(button|checkbox|radio|submit|reset|file|color|range|image|hidden)$/.test(type);
 }
 
-function toastHost(doc) {
-  let el = doc.getElementById('toast');
+function toastHost(doc, slot) {
+  const id = slot === 'aux' ? 'toast-aux' : 'toast';
+  let el = doc.getElementById(id);
   if (!el) {
     el = doc.createElement('div');
-    el.id = 'toast';
+    el.id = id;
     el.hidden = true;
     doc.body.appendChild(el);
   }
   el.classList.add('toast');
+  if (slot === 'aux') el.classList.add('toast-aux');
   el.setAttribute('role', 'status');
   el.setAttribute('aria-live', 'polite');
   return el;
 }
 
 /**
- * 显示一条提示（页面底部居中），新的提示替换旧的。
+ * 显示一条提示（页面底部居中），新的提示替换同一位置上旧的。带"撤销"的提示不会被普通提示顶掉：
+ * 它显示期间的普通提示显示在它上面一格。
  * @param {string} message
  * @param {object} [opts]
  * @param {() => (boolean|void)} [opts.undo] 有它时显示"撤销"按钮；焦点不在输入框里时按 Ctrl+Z 也一样。
@@ -51,11 +57,20 @@ function toastHost(doc) {
 export function showToast(message, opts = {}) {
   const doc = currentDocument();
   if (!doc || !doc.body) return { close() {}, undo: () => false };
-  if (active) active.close();
 
   const undoFn = typeof opts.undo === 'function' ? opts.undo : null;
+  let slot = 'main';
+  if (undoFn) {
+    // 新的撤销提示占 main：旧的（撤销或普通）都换掉；aux 上的普通提示留着
+    if (slots.main) slots.main.close();
+  } else if (slots.main && slots.main.hasUndo) {
+    slot = 'aux';
+    if (slots.aux) slots.aux.close();
+  } else if (slots.main) {
+    slots.main.close();
+  }
   const ms = typeof opts.ms === 'number' && opts.ms > 0 ? opts.ms : undoFn ? UNDO_MS : TOAST_MS;
-  const el = toastHost(doc);
+  const el = toastHost(doc, slot);
   const ac = new AbortController();
   const on = (target, type, fn, options) => target.addEventListener(type, fn, { ...(options || {}), signal: ac.signal });
 
@@ -74,14 +89,15 @@ export function showToast(message, opts = {}) {
   let used = false;
 
   const handle = {
+    hasUndo: !!undoFn,
     close() {
       if (closed) return;
       closed = true;
       if (timer !== null) clearTimeout(timer);
       timer = null;
       ac.abort();
-      if (active === handle) {
-        active = null;
+      if (slots[slot] === handle) {
+        slots[slot] = null;
         el.hidden = true;
         el.textContent = '';
       }
@@ -140,14 +156,15 @@ export function showToast(message, opts = {}) {
   });
 
   el.hidden = false;
-  active = handle;
+  slots[slot] = handle;
   run();
   return handle;
 }
 
 /** 关掉正在显示的提示（没有就什么都不做） */
 export function hideToast() {
-  if (active) active.close();
+  if (slots.aux) slots.aux.close();
+  if (slots.main) slots.main.close();
 }
 
 /**

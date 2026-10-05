@@ -6,7 +6,7 @@
 //   示例模式下恢复会同时退出示例。只读（网站在另一个标签页打开）时不能恢复。
 // 模块加载时不碰 DOM；上面几个纯函数在 tests/settings.test.js 里测。
 
-import { APP_VERSION, parseJournalText, SCHEMA_VERSION, serialize } from '../model.js';
+import { APP_VERSION, parseJournalText, SCHEMA_VERSION, serialize, versionGuard } from '../model.js';
 import { CSV_MIME, csvFileName, toCsv } from '../csv.js';
 import { todayLocal } from '../format.js';
 import { confirmDialog, showToast } from './toast.js';
@@ -47,6 +47,9 @@ export function countRows(journal) {
  */
 export function checkRestoreText(text) {
   const r = parseJournalText(text);
+  if (r.ok && versionGuard(r.journal)) {
+    return { ok: false, code: 'NEWER_SCHEMA', title: '这份文件是更新版本的网站导出的，没有恢复', message: `文件里的网站版本是 ${r.journal.appVersion}，比这个页面（${APP_VERSION}）新。网站已更新，刷新页面后才能保存。`, errors: [] };
+  }
   if (r.ok) return { ok: true, journal: r.journal, counts: countRows(r.journal) };
   const errors = Array.isArray(r.errors) ? r.errors.map((e) => e.message) : [];
   if (r.code === 'NEWER_SCHEMA') {

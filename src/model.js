@@ -2,19 +2,15 @@
 // 纯函数，不碰 DOM。派生值（止盈、盈亏、R、统计）不进数据，见 calc.js。
 
 import { isIsoDate, todayLocal } from './format.js';
+import { APP_VERSION } from './version.js';
+import { formatJournal, TOP_KEYS, SYSTEM_KEYS, TRADE_KEYS, SHOT_KEYS } from './journal-format.js';
+
+export { APP_VERSION, TOP_KEYS, SYSTEM_KEYS, TRADE_KEYS, SHOT_KEYS };
 
 /** 数据格式版本。读到比它新的数据时拒绝写入，提示刷新页面。 */
 export const SCHEMA_VERSION = 1;
-/** 网站版本号，显示在页面底部，方便确认部署后看到的是不是新版。每次发布改一下。 */
-export const APP_VERSION = '0.1.0';
 /** 金额单位的默认值 */
 export const DEFAULT_CURRENCY = '$';
-
-/** 序列化时的键顺序；不认识的键排在这些后面，按字母序。 */
-export const TOP_KEYS = Object.freeze(['schemaVersion', 'currency', 'rows']);
-export const SYSTEM_KEYS = Object.freeze(['type', 'id', 'name', 'desc', 'createdAt']);
-export const TRADE_KEYS = Object.freeze(['type', 'id', 'date', 'symbol', 'direction', 'rr', 'risk', 'result', 'pnlOverride', 'reason', 'note', 'shots', 'createdAt', 'updatedAt']);
-export const SHOT_KEYS = Object.freeze(['id', 'label', 'file', 'thumb', 'width', 'height', 'bytes', 'addedAt']);
 
 /** 数据层的错误。code：'NEWER_SCHEMA'（数据比网站新）、'INVALID'（校验没过）、'BAD_JSON'（不是 JSON） */
 export class ModelError extends Error {
@@ -25,8 +21,6 @@ export class ModelError extends Error {
     this.errors = errors;
   }
 }
-
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 function isPlainObject(v) {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
@@ -217,6 +211,7 @@ export function validateJournal(j) {
   const top = (field, problem) => errors.push({ row: null, id: null, field, message: `${field} ${problem}` });
   if (!Number.isInteger(j.schemaVersion) || j.schemaVersion < 1) top('schemaVersion', '必须是正整数');
   else if (j.schemaVersion > SCHEMA_VERSION) top('schemaVersion', `是 ${j.schemaVersion}，比这个网站支持的 ${SCHEMA_VERSION} 新`);
+  if (j.appVersion !== undefined && typeof j.appVersion !== 'string') top('appVersion', '（写入它的网站版本）必须是字符串');
   if (typeof j.currency !== 'string') top('currency', '（金额单位）必须是字符串');
   if (!Array.isArray(j.rows)) {
     top('rows', '必须是数组');
@@ -273,6 +268,55 @@ export function validateJournal(j) {
     });
   });
   return errors;
+}
+
+// ---------- 版本守卫（5.1） ----------
+
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+
+/**
+ * 比较两个三段式版本号：a 新返回 1，a 旧返回 -1，相同或有一个不是三段式返回 0。
+ * @param {unknown} a
+ * @param {unknown} b
+ */
+export function compareVersions(a, b) {
+  const ma = typeof a === 'string' ? SEMVER.exec(a) : null;
+  const mb = typeof b === 'string' ? SEMVER.exec(b) : null;
+  if (!ma || !mb) return 0;
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(ma[i]) - Number(mb[i]);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * 版本守卫：读到一份 doc（本机的、云端拉下来的、冲突对方的、要恢复的文件）时调用。
+ * 返回 null 表示可以照常写；返回 'newer-schema' 表示这份 doc 是更新版本的网站写的，这一页只读、提示刷新：
+ * - schemaVersion 比本网站认识的大；
+ * - appVersion 是三段式版本号，并且比本网站的版本新（开了几天的旧标签页、浏览器缓存里的旧代码，因此盖不掉新代码写的数据）。
+ * 没有 appVersion（例如附录 A 的示例）或认不出的写法时不拦。
+ * @param {unknown} doc
+ * @param {string} [current] 本网站版本，默认 APP_VERSION（测试时传别的）
+ * @returns {null | 'newer-schema'}
+ */
+export function versionGuard(doc, current = APP_VERSION) {
+  if (!isPlainObject(doc)) return null;
+  const d = /** @type {Record<string, unknown>} */ (doc);
+  if (typeof d.schemaVersion === 'number' && d.schemaVersion > SCHEMA_VERSION) return 'newer-schema';
+  if (compareVersions(d.appVersion, current) > 0) return 'newer-schema';
+  return null;
+}
+
+/**
+ * 保存前盖上本网站的版本号（appVersion）。不改动入参；版本号没变时原样返回同一个对象。
+ * @template {Record<string, any>} T
+ * @param {T} journal
+ * @returns {T}
+ */
+export function stampAppVersion(journal) {
+  if (journal.appVersion === APP_VERSION) return journal;
+  return { ...journal, appVersion: APP_VERSION };
 }
 
 // ---------- 版本迁移 ----------
@@ -370,59 +414,8 @@ export function parseJournalText(text, opts = {}) {
 
 // ---------- 固定格式序列化 ----------
 
-function canonicalJson(v) {
-  if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canonicalJson(x))).join(',') + ']';
-  if (isPlainObject(v)) return objectJson(v, Object.keys(v).sort());
-  return JSON.stringify(v);
-}
-
-function objectJson(obj, keys, valueJson = canonicalJson) {
-  const parts = [];
-  for (const k of keys) {
-    const val = obj[k];
-    if (val === undefined || typeof val === 'function') continue;
-    parts.push(JSON.stringify(k) + ':' + valueJson(val, k));
-  }
-  return '{' + parts.join(',') + '}';
-}
-
-function orderedKeys(obj, known) {
-  const own = Object.keys(obj);
-  return known.filter((k) => hasOwn(obj, k)).concat(own.filter((k) => known.indexOf(k) === -1).sort());
-}
-
-function shotJson(shot) {
-  return isPlainObject(shot) ? objectJson(shot, orderedKeys(shot, SHOT_KEYS)) : canonicalJson(shot);
-}
-
-function rowJson(row) {
-  if (!isPlainObject(row)) return canonicalJson(row);
-  const known = row.type === 'system' ? SYSTEM_KEYS : row.type === 'trade' ? TRADE_KEYS : ['type', 'id'];
-  return objectJson(row, orderedKeys(row, known), (val, k) => (
-    k === 'shots' && Array.isArray(val) ? '[' + val.map(shotJson).join(',') + ']' : canonicalJson(val)
-  ));
-}
-
 /**
- * 固定格式的 journal.json 文本（导出和以后备份用）：
- * 每个 row 占一行；键顺序固定（已知字段按文档顺序，不认识的字段排在后面、按字母序，原样保留）；
- * 换行用 LF，末尾有换行。返回字符串，存成文件时按 UTF-8 编码（Blob 默认就是 UTF-8，不加 BOM）。
+ * 固定格式的 journal.json 文本（导出、算哈希、备份用），写法在 journal-format.js（5.2）：
+ * 每个 row 占一行；已知字段按文档顺序，不认识的字段排在后面、按原来的相对顺序原样保留；换行用 LF，末尾有换行。
  */
-export function serialize(journal) {
-  const keys = orderedKeys(journal, TOP_KEYS).filter((k) => journal[k] !== undefined && typeof journal[k] !== 'function');
-  const lines = ['{'];
-  keys.forEach((k, i) => {
-    const comma = i < keys.length - 1 ? ',' : '';
-    const rows = journal[k];
-    if (k === 'rows' && Array.isArray(rows)) {
-      if (!rows.length) { lines.push('  "rows": []' + comma); return; }
-      lines.push('  "rows": [');
-      rows.forEach((row, n) => lines.push('    ' + rowJson(row) + (n < rows.length - 1 ? ',' : '')));
-      lines.push('  ]' + comma);
-      return;
-    }
-    lines.push('  ' + JSON.stringify(k) + ': ' + canonicalJson(journal[k]) + comma);
-  });
-  lines.push('}');
-  return lines.join('\n') + '\n';
-}
+export const serialize = formatJournal;

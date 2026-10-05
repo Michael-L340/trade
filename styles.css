@@ -124,7 +124,7 @@ h1, h2, p { margin: 0; }
 .sheet tr.selected td { background: var(--sel); }
 .sheet tr.selected td.calc { background: var(--sel-calc); }
 .sheet tr.selected td.rowhead { background: var(--accent); color: #FFFFFF; }
-.sheet td.missing { box-shadow: inset 0 0 0 2px var(--win); }
+.sheet td.missing { outline: 2px dashed #5E6A85; outline-offset: -3px; } /* 7.12：缺数用灰色虚线框，不用红色（红色只表示盈利） */
 .rownum { display: block; width: 100%; height: 44px; border: 0; background: transparent; cursor: pointer; font-family: var(--font-num); font-size: 13px; }
 .rownum:hover { background: var(--sel); }
 tr.selected .rownum:hover { background: var(--accent); }
@@ -302,6 +302,8 @@ button.cell-input { cursor: pointer; white-space: nowrap; overflow: hidden; }
 
 /* ---------- 提示里的"撤销"按钮 ---------- */
 .toast { display: flex; align-items: center; gap: 14px; }
+/* 带"撤销"的提示显示着的时候，普通提示放在它上面一格，不把它顶掉 */
+.toast.toast-aux { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
 .toast-msg { min-width: 0; }
 .toast-btn {
   flex: none; height: 30px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, .7);

@@ -69,3 +69,12 @@ test('恢复：第一行不是系统行时整份拒收；文字里的 U+0000 去
   assert.equal(r2.journal.rows[1].note, 'ab');
   assert.deepEqual(r2.counts, { trades: 16, systems: 2 });
 });
+
+test('恢复：更新版本网站导出的文件（appVersion 更新）整份拒收', async () => {
+  const { checkRestoreText } = await import('../src/ui/settings.js');
+  const j = JSON.parse((await import('node:fs')).readFileSync(new URL('../fixtures/sample-journal.json', import.meta.url), 'utf8'));
+  const r = checkRestoreText(JSON.stringify({ ...j, appVersion: '999.0.0' }));
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'NEWER_SCHEMA');
+  assert.equal(checkRestoreText(JSON.stringify({ ...j, appVersion: '0.0.1' })).ok, true);
+});
