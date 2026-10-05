@@ -347,8 +347,21 @@ export function parseJournalText(text, opts = {}) {
   } catch (e) {
     return { ok: false, code: 'BAD_JSON', message: '文件不是有效的 JSON：' + e.message, errors: [] };
   }
+  let journal;
   try {
-    return { ok: true, journal: normalizeJournal(raw, opts) };
+    journal = normalizeJournal(raw, opts);
+  } catch (e) {
+    if (e instanceof ModelError) return { ok: false, code: e.code, message: e.message, errors: e.errors };
+    throw e;
+  }
+  // 恢复时第一行必须本来就是系统行（不像首次使用那样自动补），否则交易会被悄悄挂到一个空系统下
+  const rows = Array.isArray(raw.rows) ? raw.rows : [];
+  if (!rows.length || !isPlainObject(rows[0]) || rows[0].type !== 'system') {
+    const msg = rows.length ? `第 1 行（${rows[0] && rows[0].id ? rows[0].id : '无 id'}）的 type 应该是 "system"：第一行必须是系统行` : '文件里没有任何行：第一行必须是系统行';
+    return { ok: false, code: 'INVALID', message: '数据有 1 处问题：' + msg, errors: [{ row: 1, field: 'type', message: msg }] };
+  }
+  try {
+    return { ok: true, journal };
   } catch (e) {
     if (e instanceof ModelError) return { ok: false, code: e.code, message: e.message, errors: e.errors };
     throw e;

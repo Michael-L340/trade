@@ -11,9 +11,9 @@
 
 import { SCHEMA_VERSION } from '../model.js';
 
-export const DB_NAME = 'trade-journal';
+export const DB_NAME = 'tj-journal';
 export const DB_VERSION = 1;
-export const STORES = Object.freeze({ journal: 'journal', meta: 'meta', files: 'files' });
+export const STORES = Object.freeze({ journal: 'journal', meta: 'meta', files: 'files', base: 'base', conflicts: 'conflicts' });
 export const JOURNAL_KEY = 'current';
 export const SAVE_DELAY_MS = 300;
 export const SAVE_MAX_WAIT_MS = 2000;
