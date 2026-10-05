@@ -25,6 +25,7 @@
     <div class="topbar-right">
       <span class="save-state" id="save-state"><a class="save-link" href="#/settings">只保存在这个浏览器里（点击登录）</a></span>
       <button type="button" class="btn" id="export-csv">导出 CSV</button>
+      <button type="button" class="btn primary" id="update-app" hidden>更新到新版本</button>
       <a class="btn" id="open-settings" href="#/settings">设置</a>
     </div>
   </div>
@@ -47,6 +48,7 @@
 
 <footer class="page-foot">
   <p class="version" id="app-version"></p>
+  <p class="version"><button type="button" class="btn link" id="check-update">检查更新</button></p>
 </footer>
 
 <div class="overlay" id="detail" hidden></div>

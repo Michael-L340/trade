@@ -28,6 +28,7 @@ import { mountDetail } from './ui/detail.js';
 import * as Shots from './shots.js';
 import { downloadText, exportCsv, JSON_MIME, mountSettings } from './ui/settings.js';
 import { showToast } from './ui/toast.js';
+import { fetchLatestVersion, isNewer, reloadFresh } from './update.js';
 import { cloudConfigured, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './config.js';
 import { createRemote } from './store/remote.js';
 import { createSync } from './store/sync.js';
@@ -89,6 +90,7 @@ async function boot() {
     version: $('app-version'),
   };
   els.version.textContent = `网站版本 ${APP_VERSION} · 数据格式 ${SCHEMA_VERSION}`;
+  setupUpdate();
 
   /** 不在 store 里的界面状态 */
   const env = {
@@ -542,3 +544,31 @@ export const ready = boot().catch((err) => {
   showFatal(err);
   return null;
 });
+
+/** 更新按钮：打开页面和切回页面时（最多 10 分钟一次）查线上版本，比这个页面新就在顶栏显示"更新到新版本"；页脚"检查更新"手动查 */
+function setupUpdate() {
+  const btn = document.getElementById('update-app');
+  const check = document.getElementById('check-update');
+  let lastAt = 0;
+  async function look(manual) {
+    lastAt = Date.now();
+    const latest = await fetchLatestVersion();
+    if (latest && isNewer(latest, APP_VERSION)) {
+      btn.textContent = `更新到 ${latest}`;
+      btn.hidden = false;
+      if (manual) showToast(`有新版本 ${latest}，点右上角"更新到 ${latest}"`);
+    } else if (manual) {
+      showToast(latest ? `已经是最新版本 ${APP_VERSION}` : '没连上网站，稍后再试');
+    }
+  }
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = '正在更新…';
+    reloadFresh();
+  });
+  check.addEventListener('click', () => { look(true); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastAt > 10 * 60 * 1000) look(false);
+  });
+  look(false);
+}
