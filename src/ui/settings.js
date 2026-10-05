@@ -1,5 +1,5 @@
-// 设置页（#/settings，交接文档 7.10 里这一步要做的部分）：金额单位、导出 journal.json、从 journal.json 恢复、
-// 导出 CSV、关于。连接 GitHub 是第 3 步的事，这里不做。
+// 设置页（#/settings，交接文档 7.10）：登录和同步、截图空间、每日备份、冲突留底（这几块在 ui/cloud-settings.js），
+// 金额单位、导出 journal.json、从 journal.json 恢复、导出 CSV、关于（本机存储）。
 // - 金额单位是数据的一部分（journal.currency，第 5 节），改了会跟着数据一起存进本机、一起导出；不放 localStorage。
 // - 导出的是此刻表格里显示的数据：示例模式下导出的是示例数据（文件名带"示例"，页面上有说明）。
 // - 从 journal.json 恢复替换的是你自己的数据：先解析、迁移、逐条校验，再页内确认，最后 replaceJournal；
@@ -11,6 +11,7 @@ import { CSV_MIME, csvFileName, toCsv } from '../csv.js';
 import { todayLocal } from '../format.js';
 import { confirmDialog, showToast } from './toast.js';
 import { readOnlyMessage } from './sheet.js';
+import { mountCloudSections } from './cloud-settings.js';
 
 export const JSON_MIME = 'application/json';
 /** 恢复时最多读多大的文件（一万笔交易的 journal.json 也只有几 MB） */
@@ -102,7 +103,8 @@ export function exportCsv(journal, opts = {}) {
  * 把设置页画进 container，并接上 store。
  * @param {HTMLElement} container
  * @param {object} store createStore 的返回值
- * @param {{localdb?: object}} [opts] localdb 是 openLocalDb 的返回值（看存储方式：IndexedDB 还是只在内存）
+ * @param {{localdb?: any, sync?: any, openConflict?: () => void}} [opts] localdb 是 openLocalDb 的返回值（看存储方式：IndexedDB 还是只在内存）；
+ *   sync 是 createSync 的返回值（登录、同步、用量、备份状态）；openConflict 打开冲突对话框
  * @returns {{refresh: () => void, destroy: () => void}}
  */
 export function mountSettings(container, store, opts = {}) {
@@ -174,7 +176,11 @@ export function mountSettings(container, store, opts = {}) {
   secCur.appendChild(curRow);
 
   // ---------- 备份和导出 ----------
-  const secData = section('备份和导出', '数据只保存在这个浏览器里。请定期导出 journal.json 备份；换浏览器、换电脑时，用"从 journal.json 恢复"载入。journal.json 只记录有哪些截图，不含图片本身：在别的浏览器里恢复后，截图位置会显示"文件不在本机"。CSV 给 Excel 用，不能拿来恢复。');
+  const cloudOn = !!(opts.sync && opts.sync.state.configured);
+  const secData = section('导出和恢复', (cloudOn
+    ? '登录后数据会同步到云端，每天还会自动备份到 GitHub 私有仓库。另外建议每季度导出一份 journal.json 存到本机或网盘（云端和 GitHub 都出事时的最后一道保险）。'
+    : '数据只保存在这个浏览器里。请定期导出 journal.json 备份；换浏览器、换电脑时，用"从 journal.json 恢复"载入。')
+    + 'journal.json 只记录有哪些截图，不含图片本身。从 journal.json 恢复时，现在的数据会先存进"冲突留底"并下载一份；登录着的话恢复后的数据会带版本写回云端。CSV 给 Excel 用，不能拿来恢复。');
   const demoNote = h('p', 'note warn');
   demoNote.hidden = true;
   const btnRow = h('div', 'btn-row');
@@ -211,10 +217,29 @@ export function mountSettings(container, store, opts = {}) {
   ddVersion.textContent = `网站 ${APP_VERSION}，数据格式 ${SCHEMA_VERSION}`;
   ddKeep.textContent = '正在查询…';
   secAbout.appendChild(dl);
-  secAbout.appendChild(h('p', 'note', '同步到 GitHub 私有仓库是后面的步骤，现在还没有。数据不会发到任何地方。'));
+  const ddUsed = item('本机已用');
+  ddUsed.textContent = '正在查询…';
+  const ua = (win.navigator && win.navigator.userAgent) || '';
+  if (/Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\//.test(ua)) {
+    secAbout.appendChild(h('p', 'note warn', 'Safari 可能清掉 7 天没打开的网站的本机数据，请保持登录，让数据进云端。'));
+  }
 
   root.append(head, secCur, secData, secAbout);
   container.appendChild(root);
+  const cloud = opts.sync
+    ? mountCloudSections(root, { store, sync: opts.sync, localdb, download: (name, text) => downloadText(name, text, JSON_MIME, doc), openConflict: opts.openConflict, h, section, button, before: secCur })
+    : null;
+  (async () => {
+    try {
+      const s = win.navigator && win.navigator.storage;
+      if (s && typeof s.estimate === 'function') {
+        const e = await s.estimate();
+        if (!ac.signal.aborted) ddUsed.textContent = `${((e.usage || 0) / 1000000).toFixed(1)} MB（浏览器给这个网站的上限约 ${((e.quota || 0) / 1000000000).toFixed(1)} GB，和同一网址下的其他网站共用）`;
+        return;
+      }
+    } catch (err) { /* 用下面的说法 */ }
+    if (!ac.signal.aborted) ddUsed.textContent = '这个浏览器不支持查询';
+  })();
 
   // ---------- 刷新显示 ----------
   function refresh() {
@@ -242,7 +267,9 @@ export function mountSettings(container, store, opts = {}) {
       ddWhere.textContent = `只在内存里：${localdb.fallbackReason || '没能使用浏览器的本机存储'}。刷新或关掉页面数据就没了，请马上导出 journal.json。`;
       ddWhere.className = 'warn';
     } else {
-      ddWhere.textContent = '这个浏览器的 IndexedDB（只在这个浏览器里；换浏览器、清除网站数据或用无痕窗口都看不到）';
+      ddWhere.textContent = cloudOn
+        ? '这个浏览器的 IndexedDB（先存这里，登录后再同步到云端；没登录时只在这个浏览器里）'
+        : '这个浏览器的 IndexedDB（只在这个浏览器里；换浏览器、清除网站数据或用无痕窗口都看不到）';
       ddWhere.className = '';
     }
 
@@ -386,6 +413,7 @@ export function mountSettings(container, store, opts = {}) {
     }
     const st = store.get();
     const mine = countRows(store.realJournal());
+    const missing = await countMissingShots(res.journal);
     const details = [
       `文件"${f.name}"里：${res.counts.trades} 笔交易、${res.counts.systems} 个系统，金额单位"${res.journal.currency}"`,
       `你现在的数据：${mine.trades} 笔交易、${mine.systems} 个系统，会被整份替换，不能撤销`,
@@ -394,6 +422,7 @@ export function mountSettings(container, store, opts = {}) {
         : '替换前会自动下载一份你现在的数据（文件名以"恢复前自动备份"开头）',
     ];
     if (st.ui.demo) details.push('恢复后会退出示例模式');
+    if (missing) details.push(`本机没有其中 ${missing} 张截图：登录着的话会从云端取；云端也没有的，原图在备份仓库的 shots/ 里`);
     const ok = await confirmDialog({
       title: '用这份文件替换你现在的全部数据？',
       details,
@@ -405,6 +434,9 @@ export function mountSettings(container, store, opts = {}) {
     try {
       const before = store.realJournal();
       if (before && Array.isArray(before.rows) && before.rows.some((r) => r && r.type === 'trade')) {
+        if (localdb && typeof localdb.addConflict === 'function' && !st.ui.demo) {
+          await localdb.addConflict({ at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), source: 'restore', doc: before });
+        }
         downloadText('恢复前自动备份-' + journalFileName(new Date(), false), serialize(before), JSON_MIME);
       }
     } catch (err) {
@@ -426,13 +458,32 @@ export function mountSettings(container, store, opts = {}) {
     showToast(`已从 ${f.name} 恢复 ${res.counts.trades} 笔交易`);
   });
 
+  /** 恢复的文件里引用的截图，本机有几张没有（按张数，缩略图不另算） */
+  async function countMissingShots(j) {
+    if (!localdb || typeof localdb.getFile !== 'function') return 0;
+    let n = 0;
+    for (const r of j.rows) {
+      if (r.type !== 'trade' || !Array.isArray(r.shots)) continue;
+      for (const sh of r.shots) {
+        try {
+          if (sh && sh.file && !(await localdb.getFile(sh.file))) n += 1;
+        } catch (err) { /* 读不出来不算 */ }
+      }
+    }
+    return n;
+  }
+
   const off = store.subscribe(() => refresh());
   refresh();
 
   return {
-    refresh,
+    refresh() {
+      refresh();
+      if (cloud) cloud.refresh();
+    },
     destroy() {
       off();
+      if (cloud) cloud.destroy();
       ac.abort();
       container.textContent = '';
     },

@@ -11,6 +11,9 @@
 //      进出示例模式时内存里的示例截图由 shots.js 自己清空，这里把缓存里的 Blob 地址全部释放。
 //   5. hash 路由：#/ 是交易表，#/settings 是设置页。
 //   6. 关页面或切到后台时，立刻把还没写的修改写进 IndexedDB。
+//   7. 云端（第 8 节）：src/config.js 配好了就建 remote（唯一碰 supabase-js 的模块）和同步状态机 sync；
+//      只有能写的标签页启动同步。本机每写完一次修改通知 sync（2 秒后发，最长 10 秒）；
+//      同步把云端数据写进本机后，通知其他标签页重读；出现冲突时弹冲突对话框。顶栏状态照 7.11。
 //
 // 这个模块加载时自动启动。导出的 ready 是启动的结果（{ store, db, ... }，出错时为 null），只给测试和调试用。
 // 不碰 localStorage；全部用 createElement / textContent，不拼 HTML。
@@ -25,6 +28,10 @@ import { mountDetail } from './ui/detail.js';
 import * as Shots from './shots.js';
 import { downloadText, exportCsv, JSON_MIME, mountSettings } from './ui/settings.js';
 import { showToast } from './ui/toast.js';
+import { cloudConfigured, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './config.js';
+import { createRemote } from './store/remote.js';
+import { createSync } from './store/sync.js';
+import { openConflictDialog } from './ui/conflict.js';
 
 /** 示例数据（交接文档附录 A），相对这个文件定位，部署在子路径下也对 */
 const DEMO_URL = new URL('../fixtures/sample-journal.json', import.meta.url);
@@ -90,6 +97,7 @@ async function boot() {
     saveError: null, // 最近一次保存失败的错误（成功保存后清掉）
     loadError: null, // 读本机数据失败
     badData: null, // 本机数据校验没过：{ raw, error }
+    cloudError: null, // 云端配置了，supabase-js 却没加载上
   };
   let store = null;
   let renderChrome = () => {};
@@ -129,6 +137,28 @@ async function boot() {
     }
   }
 
+  // ---------- 云端（第 8 节） ----------
+  let remote = null;
+  if (cloudConfigured(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)) {
+    try {
+      remote = createRemote({ url: SUPABASE_URL, key: SUPABASE_PUBLISHABLE_KEY });
+    } catch (err) {
+      env.cloudError = err; // vendor/supabase.js 没加载上：照常只存本机
+    }
+  }
+  let link = null;
+  const sync = createSync({
+    remote,
+    db,
+    store,
+    download: (name, text) => downloadText(name, text, JSON_MIME),
+    onPulled: () => { if (link) link.notifyOthers(); },
+    onConflict: () => { openConflict(); },
+  });
+  function openConflict() {
+    if (sync.state.conflict) openConflictDialog(sync.state.conflict, sync);
+  }
+
   // ---------- 4. 界面 ----------
   // 截图：表格和详情只通过这里的函数和地址缓存存取截图，不直接碰 IndexedDB。示例模式以 store 的 ui.demo 为准。
   const shotCtx = {
@@ -136,6 +166,8 @@ async function boot() {
     db,
     // 撤销删除截图时文件写回失败（几乎不会）：元数据已经放回，这里告诉用户
     onError(err) { showToast('撤销删除时截图文件没能写回（缩略图会显示"文件不在本机"）：' + messageOf(err)); },
+    // 本机没有的截图：登录了就从云端桶里取，存进本机（7.8）
+    fetchRemote: remote ? (path) => sync.fetchShot(path) : undefined,
   };
   const urlCache = Shots.createUrlCache(shotCtx);
   const shots = {
@@ -157,7 +189,7 @@ async function boot() {
   const chart = mountChart(els.chart, store, { openDetail });
   const sheet = mountSheet(els.sheet, store, { openDetail, onLoadDemo: loadDemo, shots });
 
-  const link = connectStore(store, db, {
+  link = connectStore(store, db, {
     writer,
     onError(err) {
       if (err && err.name === 'ModelError') {
@@ -175,6 +207,7 @@ async function boot() {
         env.saveError = null;
         renderChrome();
       }
+      if (!store.get().ui.demo) sync.notifyLocalChange();
     },
   });
 
@@ -231,30 +264,71 @@ async function boot() {
   els.exportCsv.addEventListener('click', onExportCsv);
 
   // ---------- 顶栏的保存状态（7.11）和横幅 ----------
+  /** 顶栏状态（7.11）。kind：link 去设置页；retry 立即重试；conflict 打开冲突框；badText 跳到那一格 */
   function saveStateView(ui) {
+    const st = sync.state;
     if (ui.demo) return { key: 'demo', text: '示例数据，不保存', cls: '', title: '示例模式下的修改只在这个页面里，退出示例或刷新后就没了' };
     if (ui.readOnly === 'other-tab') return { key: 'other-tab', text: '另一个标签页正在编辑，这里只读', cls: 'warn', title: '在那个标签页里修改；关掉它以后这里会自动变成可以修改' };
-    if (ui.readOnly === 'newer-schema') return { key: 'newer', text: '网站已更新，刷新页面后才能保存', cls: 'warn', title: '按 Ctrl+F5 刷新页面，加载最新版网站' };
+    if (ui.readOnly === 'newer-schema' || st.status === 'newer') return { key: 'newer', text: '网站已更新，刷新页面后才能保存', cls: 'warn', title: '按 Ctrl+F5 刷新页面，加载最新版网站。本机修改还在，刷新后照常同步。' };
     if (ui.readOnly) return { key: 'ro:' + ui.readOnly, text: '只读：这一页不会保存', cls: 'warn', title: readOnlyMessage(ui.readOnly) };
-    if (env.saveError) return { key: 'error', text: '保存失败，点击重试', cls: 'error', retry: true, title: messageOf(env.saveError) };
-    if (db.kind === 'memory') return { key: 'memory', text: '只在内存里，刷新会丢（点击去设置导出）', cls: 'warn', link: true, title: db.fallbackReason || '' };
-    return { key: 'local', text: '只保存在这个浏览器里（点击登录）', cls: '', link: true, title: '数据只存在这个浏览器的 IndexedDB 里，没有同步到别处。到设置页可以导出 journal.json 备份。' };
+    if (env.saveError) return { key: 'error', text: '保存失败，点击重试', cls: 'error', kind: 'retry', title: messageOf(env.saveError) };
+    if (db.kind === 'memory') return { key: 'memory', text: '只在内存里，刷新会丢（点击去设置导出）', cls: 'warn', kind: 'link', title: db.fallbackReason || '' };
+    const pendingText = { key: 'pending', text: '有未同步的修改', cls: '', kind: 'link', title: '本机已经存好，等着传到云端（断网、超时时会自动重试）' };
+    switch (st.status) {
+      case 'synced':
+        if (st.pending) return pendingText;
+        if (st.rejectedShots > 0) return { key: 'synced-rej:' + st.rejectedShots, text: `已保存到云端，${st.rejectedShots} 张截图没传上去（点击查看）`, cls: 'warn', kind: 'link' };
+        return { key: 'synced', text: '已保存到云端', cls: 'ok', kind: 'link', title: '本机和云端一致' };
+      case 'syncing': return { key: 'syncing', text: '保存中…', cls: '', kind: 'link' };
+      case 'pending': return pendingText;
+      case 'needLogin': return { key: 'needLogin', text: '需要重新登录（本机修改已保留）', cls: 'warn', kind: 'link' };
+      case 'conflict': return { key: 'conflict', text: '云端也改过，点击处理', cls: 'warn', kind: 'conflict' };
+      case 'grant': return { key: 'grant', text: '云端权限没配好（点击查看）', cls: 'warn', kind: 'link' };
+      case 'badText': {
+        const b = st.badText;
+        return { key: 'badText', text: b && b.tradeNo ? `第 ${b.tradeNo} 笔有存不进去的字符（点击定位）` : '有存不进去的字符（点击定位）', cls: 'warn', kind: 'badText' };
+      }
+      case 'missingRemote': return { key: 'missingRemote', text: '云端找不到日志（点击处理）', cls: 'warn', kind: 'link' };
+      case 'otherOwner': return { key: 'otherOwner', text: '本机日志属于另一个账号（点击处理）', cls: 'warn', kind: 'link' };
+      case 'quota':
+      case 'paused': return { key: 'quota', text: '云端暂时存不进去（点击查看）', cls: 'warn', kind: 'link' };
+      case 'error': return { key: 'sync-error', text: '保存失败，点击重试', cls: 'error', kind: 'retry' };
+      default:
+        return { key: 'local', text: '只保存在这个浏览器里（点击登录）', cls: '', kind: 'link', title: st.configured ? '到设置页登录后，数据会同步到云端' : '云端还没配置：数据只存在这个浏览器的 IndexedDB 里。到设置页可以导出 journal.json 备份。' };
+    }
+  }
+
+  /** 截图空间过了 800 MB：状态旁边多一行小字（7.11） */
+  function usageNote() {
+    const u = sync.state.usage;
+    if (!u || !sync.state.configured) return null;
+    if (u.project_bytes >= u.limit_bytes) return { cls: 'full', text: '截图空间已满' };
+    if (u.project_bytes >= u.warn_bytes) return { cls: 'warn', text: `截图空间已用 ${Math.round(u.project_bytes / 1000000)} MB` };
+    return null;
   }
 
   let saveKey = null;
   function renderSaveState(ui) {
     const v = saveStateView(ui);
-    if (v.key === saveKey) return;
-    saveKey = v.key;
+    const note = usageNote();
+    const key = v.key + '|' + (note ? note.text : '');
+    if (key === saveKey) return;
+    saveKey = key;
     const box = els.saveState;
     const hadFocus = box.contains(document.activeElement);
     box.className = 'save-state' + (v.cls ? ' ' + v.cls : '');
     box.textContent = '';
     let inner;
-    if (v.retry) {
+    if (v.kind === 'retry') {
       inner = button('btn link save-retry', v.text);
       inner.addEventListener('click', retrySave);
-    } else if (v.link) {
+    } else if (v.kind === 'conflict') {
+      inner = button('btn link save-retry', v.text);
+      inner.addEventListener('click', openConflict);
+    } else if (v.kind === 'badText') {
+      inner = button('btn link save-retry', v.text);
+      inner.addEventListener('click', jumpToBadText);
+    } else if (v.kind === 'link') {
       inner = el('a', 'save-link', v.text);
       inner.href = '#/settings';
     } else {
@@ -262,10 +336,28 @@ async function boot() {
     }
     if (v.title) inner.title = v.title;
     box.appendChild(inner);
-    if (hadFocus && (v.retry || v.link)) inner.focus({ preventScroll: true });
+    if (note) box.appendChild(el('span', 'usage-note ' + note.cls, note.text));
+    if (hadFocus && v.kind) inner.focus({ preventScroll: true });
+  }
+
+  /** 坏字符：跳到那一格（交易表里的格子；系统行跳到名称或说明） */
+  function jumpToBadText() {
+    const b = sync.state.badText;
+    if (!b) { location.hash = '#/settings'; return; }
+    if (routeOf(location.hash) !== 'sheet') location.hash = '#/';
+    const colMap = { symbol: 'symbol', reason: 'reason', note: 'note', name: 'name', desc: 'desc', date: 'date' };
+    const col = colMap[b.field];
+    if (col) sheet.focusCell(b.id, col);
+    else detail.open(b.id);
+    showToast(`第 ${b.tradeNo || '?'} 笔的"${b.label}"里有存不进去的字符，改掉后会自动重试`);
   }
 
   async function retrySave() {
+    if (!env.saveError && sync.state.status === 'error') {
+      await sync.syncNow({ force: true });
+      renderChrome();
+      return;
+    }
     const ok = await link.saveNow();
     if (ok) {
       env.saveError = null;
@@ -299,6 +391,9 @@ async function boot() {
     }
     if (env.blocked && !env.dbClosed) {
       list.push({ key: 'blocked', warn: true, text: '这个网站的其他标签页挡住了本机存储的升级。请关掉其他标签页，然后刷新这个页面。' });
+    }
+    if (env.cloudError) {
+      list.push({ key: 'cloud-error', warn: true, text: '云端同步没能启动（' + messageOf(env.cloudError) + '）。数据照常存在这个浏览器里。请按 Ctrl+F5 刷新页面。' });
     }
     if (db.kind === 'memory') {
       list.push({
@@ -354,7 +449,13 @@ async function boot() {
   const offChrome = store.subscribe((ev) => {
     if (ev.type === 'ui' || ev.type === 'journal') renderChrome();
   });
+  const offSync = sync.subscribe(() => renderChrome());
   renderChrome();
+
+  // ---------- 7. 同步：只有能写的标签页启动 ----------
+  const startSync = () => { if (!store.get().ui.readOnly) sync.start(); };
+  const offSyncStart = store.subscribe((ev) => { if (ev.type === 'ui' && ev.reason === 'readOnly') startSync(); });
+  startSync();
 
   // ---------- 5. 路由：#/ 交易表，#/settings 设置页 ----------
   let page = null;
@@ -373,7 +474,7 @@ async function boot() {
       detail.close();
       els.pageSheet.hidden = true;
       els.pageSettings.hidden = false;
-      settingsView = mountSettings(els.pageSettings, store, { localdb: db });
+      settingsView = mountSettings(els.pageSettings, store, { localdb: db, sync, openConflict });
       els.openSettings.setAttribute('aria-current', 'page');
       document.title = '设置 · ' + TITLE;
       window.scrollTo(0, 0);
@@ -404,6 +505,7 @@ async function boot() {
     store,
     db,
     link,
+    sync,
     writer,
     sheet,
     detail,
@@ -420,6 +522,9 @@ async function boot() {
       els.demoExit.removeEventListener('click', exitDemo);
       els.exportCsv.removeEventListener('click', onExportCsv);
       offChrome();
+      offSync();
+      offSyncStart();
+      sync.destroy();
       if (settingsView) settingsView.destroy();
       link.stop();
       sheet.destroy();

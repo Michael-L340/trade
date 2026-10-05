@@ -424,3 +424,31 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .paste-box.busy { cursor: progress; }
 .paste-box[aria-disabled="true"] { cursor: not-allowed; }
 .shot-hint { align-self: center; }
+
+/* ====================================================================
+   五、云端同步（7.10、7.11）
+   黄色提醒：文字 #6B4E00、底色 #FFF4CC（7.0:1）；橙色（截图空间已满）：文字 #8A3A00、底色 #FDE7D6（6.5:1）。
+   不用盈利的红和亏损的绿：红绿只表示盈亏。每处提醒都配文字说明。
+   ==================================================================== */
+:root { --alert: #6B4E00; --alert-bg: #FFF4CC; --full: #8A3A00; --full-bg: #FDE7D6; }
+.save-state { flex-wrap: wrap; }
+.save-state.ok .save-link { font-weight: 500; }
+.usage-note { padding: 0 6px; font-size: 12px; line-height: 20px; }
+.usage-note.warn { color: var(--alert); background: var(--alert-bg); }
+.usage-note.full { color: var(--full); background: var(--full-bg); }
+.note.full { color: var(--full); background: var(--full-bg); padding: 6px 10px; }
+.settings .note.warn, .backup-lines .note.warn, .problem-box .note.warn { color: var(--alert); background: var(--alert-bg); padding: 6px 10px; }
+.about-list dd.warn { color: var(--alert); background: var(--alert-bg); padding: 2px 6px; }
+.note.mono { font-family: 'IBM Plex Mono', 'Noto Sans SC', monospace; word-break: break-all; }
+.problem-box { display: grid; gap: 8px; margin-top: 10px; }
+.problem-box:empty { display: none; }
+.steps { margin: 6px 0 0; padding-left: 1.4em; font-size: 13px; line-height: 1.7; color: var(--ink-2); }
+.login-form { display: grid; gap: 8px; }
+.login-form .text-input { min-width: 0; width: 260px; max-width: 100%; }
+.signed-box { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.signed-box p { margin: 0; }
+.backup-lines { display: grid; gap: 6px; }
+.kept-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.kept-item { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.kept-item span { font-family: 'IBM Plex Mono', 'Noto Sans SC', monospace; }
+.conflict-dialog { max-width: min(560px, calc(100% - 32px)); }
