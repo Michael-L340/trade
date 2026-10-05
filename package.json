@@ -1,0 +1,9 @@
+{
+  "name": "trade-journal",
+  "private": true,
+  "description": "只告诉 Node 这些 .js 是 ES 模块，没有任何依赖。",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}
