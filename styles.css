@@ -467,3 +467,5 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .sheet th, .sheet th.r { text-align: center; }
 /* 品种格用了候选列表，隐藏 Chrome 自带的下拉三角，保持格子干净 */
 .cell-input[list]::-webkit-calendar-picker-indicator { display: none !important; }
+/* "改"标记：固定 18×18 的框，字在框里上下左右都居中 */
+.edited-tag { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 18px; height: 18px; padding: 0; line-height: 1; vertical-align: middle; }
