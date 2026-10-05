@@ -29,7 +29,7 @@ const at = (row, col) => ({ row, col });
 
 test('列定义：12 列、宽度和预览稿一致；键盘能停的格子', () => {
   assert.deepEqual(COLUMNS.map((c) => c.key), ['no', 'date', 'symbol', 'direction', 'rr', 'risk', 'tp', 'result', 'pnl', 'reason', 'shots', 'note']);
-  assert.deepEqual(COLUMNS.map((c) => c.width), [48, 104, 84, 56, 72, 80, 108, 84, 108, null, 112, 220]);
+  assert.deepEqual(COLUMNS.map((c) => c.width), [48, 104, 84, 56, 72, 80, 108, 84, 156, null, 112, 220]);
   assert.equal(NAV_COLUMNS.trade.includes('tp'), false, '止盈是自动算的，不停留');
   assert.equal(NAV_COLUMNS.empty.includes('no'), false, '空行的行号不是按钮');
   assert.deepEqual(NAV_COLUMNS.system, ['menu', 'name', 'desc']);

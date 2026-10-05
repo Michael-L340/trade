@@ -103,7 +103,10 @@ export function layoutChart(derived, width) {
   let idx = 0;
   let prevHad = false;
   let lastRight = -Infinity;
-  for (const seg of derived.grouped.segments) {
+  // 各系统的交易按日期交错在一起时（几个系统同时用），曲线不再按系统分段标注
+  const order = closed.map((it) => it.t.id).join(' ');
+  const contiguous = order === derived.grouped.segments.flatMap((seg) => seg.stats.closed.map((it) => it.t.id)).join(' ');
+  for (const seg of contiguous ? derived.grouped.segments : []) {
     const list = seg.stats.closed;
     const count = list.length;
     if (!count) continue;

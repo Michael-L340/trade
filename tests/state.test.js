@@ -529,3 +529,34 @@ test('随机操作 600 步：约束始终成立', () => {
   const all = store.get().journal.rows.map((r) => r.id);
   assert.equal(new Set(all).size, all.length, 'id 不重复');
 });
+
+test('addTradeToSystem：加到这个系统最后，品种和止损沿用这个系统的上一笔', () => {
+  const j = smallJournal();
+  j.rows.push(
+    { type: 'system', id: 'sys_b', name: 'B', desc: '', createdAt: '2026-10-02T00:00:00Z' },
+    { type: 'trade', id: 't_b1', date: '2026-10-02', symbol: 'NAS100', direction: 'long', rr: 3, risk: 80, result: null, pnlOverride: null, reason: '', note: '', shots: [] },
+  );
+  const { store, a } = setup(j);
+  const id = a.addTradeToSystem('sys_r');
+  assert.deepEqual(ids(store), ['sys_r', 't_r1', id, 'sys_b', 't_b1']);
+  assert.equal(row(store, id).symbol, 'EURUSD');
+  assert.equal(row(store, id).risk, 50);
+  assert.equal(row(store, id).date, '2026-10-05');
+  const id2 = a.addTradeToSystem('sys_b');
+  assert.deepEqual(ids(store).slice(-2), ['t_b1', id2]);
+  assert.equal(row(store, id2).symbol, 'NAS100');
+  assert.equal(a.addTradeToSystem('t_r1'), null, '不是系统行');
+  checkInvariants(store);
+});
+
+test('几个系统同时用：全部交易的统计按日期排', () => {
+  const j = smallJournal();
+  j.rows[1].date = '2026-10-03'; // 系统 A 的这笔比系统 B 的晚
+  j.rows.push(
+    { type: 'system', id: 'sys_b', name: 'B', desc: '', createdAt: '2026-10-02T00:00:00Z' },
+    { type: 'trade', id: 't_b1', date: '2026-10-02', symbol: 'NAS100', direction: 'long', rr: 3, risk: 80, result: 'loss', pnlOverride: null, reason: '', note: '', shots: [] },
+  );
+  const { store } = setup(j);
+  assert.deepEqual(store.get().derived.all.closed.map((it) => it.t.id), ['t_b1', 't_r1']);
+  assert.deepEqual(store.get().derived.all.cumulative, [0, -1, 1]);
+});

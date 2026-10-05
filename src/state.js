@@ -251,6 +251,23 @@ export function createStore(initial, opts = {}) {
       return removeRow(i, 'delete');
     },
 
+    /**
+     * 某个系统下面的「＋ 记一笔」：在这个系统的最后一笔后面（下一个系统行前面）加一笔，返回新交易的 id。
+     * 默认值：今天、方向多，品种和止损沿用这个系统里的上一笔（这个系统还没有交易时沿用全表最后一笔）。
+     */
+    addTradeToSystem(sysId) {
+      if (!canEdit()) return null;
+      const i = indexOf(sysId);
+      if (i < 0 || journal.rows[i].type !== 'system') return null;
+      let end = i + 1;
+      while (end < journal.rows.length && journal.rows[end].type !== 'system') end++;
+      const at = now();
+      const d = end > i + 1 ? emptyRowDefaults({ rows: journal.rows.slice(i, end) }, at) : emptyRowDefaults(journal, at);
+      const trade = newTrade({ date: d.date, symbol: d.symbol, direction: d.direction, risk: d.risk }, { now: at, taken: takenIds() });
+      commit(withRows((rows) => { rows.splice(end, 0, trade); }), { type: 'rows', ids: [trade.id], reason: 'create' });
+      return trade.id;
+    },
+
     /** 在某笔交易上方插入一个空的系统行，返回它的 id。 */
     insertSystemRowAbove(tradeId) {
       if (!canEdit()) return null;

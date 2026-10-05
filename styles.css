@@ -471,3 +471,9 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .edited-tag { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 18px; height: 18px; padding: 0; line-height: 1; vertical-align: middle; }
 /* 不再有"一碰就建一笔"的空行：新增一笔只能点「＋ 记一笔」（空行留在 DOM 里给按钮复用，不显示） */
 .sheet tr.empty-row { display: none; }
+/* 盈亏格右边的浅色小字：这一笔实际赚了几个 R。左右留一样的宽度，金额仍在正中 */
+.r-tag { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; font: 11px/1 var(--font-num); color: var(--ink-3); }
+.sheet td.pnl .cell-input[data-col="pnl"], .sheet td.has-tag .cell-input[data-col="pnl"] { padding-left: 44px; padding-right: 44px; }
+/* 每个系统最后一行下面的「＋ 记一笔」 */
+.sheet tr.add-row td { padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.add-trade-btn { min-height: 30px; padding: 0 12px; font-size: 13px; color: var(--accent); border-color: var(--line-2); }

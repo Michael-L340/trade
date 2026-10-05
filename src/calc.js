@@ -142,5 +142,11 @@ export function deriveJournal(rows) {
   });
   const tradeById = new Map();
   grouped.trades.forEach(function (it) { tradeById.set(it.t.id, it); });
-  return { grouped: grouped, all: computeStats(grouped.trades), segStats: segStats, tradeById: tradeById, segmentById: segmentById };
+  // 几个系统同时在用：全部交易的统计和累计曲线按日期排（同一天按表里的先后），回撤、连亏才对得上时间
+  const byDate = grouped.trades.slice().sort(function (x, y) {
+    const a = typeof x.t.date === 'string' ? x.t.date : '';
+    const b = typeof y.t.date === 'string' ? y.t.date : '';
+    return a < b ? -1 : a > b ? 1 : x.no - y.no;
+  });
+  return { grouped: grouped, all: computeStats(byDate), segStats: segStats, tradeById: tradeById, segmentById: segmentById };
 }
