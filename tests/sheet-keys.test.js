@@ -1,5 +1,5 @@
 // 交易表的纯逻辑（src/ui/sheet.js 上半部分）：键盘移动的下一格、按键含义、输入的解析和提交规则、格子显示，
-// 以及表格和详情共用的截图小工具（标签、路径、剪贴板、默认标签、地址计数、shotApi）。不碰 DOM。
+// 以及表格和详情共用的截图小工具（标签、路径、剪贴板、默认标签、地址计数、shotApi）和详情里选大图的规则。不碰 DOM。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,6 +9,7 @@ import {
   readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
   pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText,
 } from '../src/ui/sheet.js';
+import { pickCurrentShot } from '../src/ui/detail.js';
 import { deriveJournal, deriveTrade } from '../src/calc.js';
 
 const M = '\u{2212}';
@@ -544,4 +545,17 @@ test('错误说明', () => {
   assert.equal(errorText('空间不够'), '空间不够');
   assert.equal(errorText(undefined), '原因不明');
   assert.equal(errorText(new Error('')), 'Error');
+});
+
+test('详情的大图：截图列表变了以后显示哪一张', () => {
+  const ids = ['sh_a', 'sh_b', 'sh_c'];
+  assert.equal(pickCurrentShot(ids, 'sh_b', ids), 'sh_b', '还在就还是它');
+  assert.equal(pickCurrentShot(ids, 'sh_b', ['sh_a', 'sh_c']), 'sh_c', '删了中间那张：显示补上来的那张');
+  assert.equal(pickCurrentShot(ids, 'sh_c', ['sh_a', 'sh_b']), 'sh_b', '删了最后一张：显示新的最后一张');
+  assert.equal(pickCurrentShot(ids, 'sh_a', ['sh_b', 'sh_c']), 'sh_b');
+  assert.equal(pickCurrentShot(ids, 'sh_b', ['sh_a']), 'sh_a', '后面的也没了：往前找');
+  assert.equal(pickCurrentShot(ids, 'sh_b', ['sh_x']), 'sh_x', '一张都不认识：第一张');
+  assert.equal(pickCurrentShot([], null, ['sh_a', 'sh_b']), 'sh_a', '原来没有选：第一张');
+  assert.equal(pickCurrentShot(ids, 'sh_b', []), null, '没有截图了');
+  assert.equal(pickCurrentShot(ids, 'sh_b', [...ids, 'sh_d']), 'sh_b', '加了新的不跳（加完由详情自己选新的那张）');
 });
