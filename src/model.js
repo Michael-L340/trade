@@ -95,7 +95,7 @@ function deepHasBadText(v) {
   return false;
 }
 
-const TEXT_FIELD_LABEL = { name: '系统名称', desc: '系统说明', symbol: '品种', reason: '开仓理由', note: '备注', date: '日期' };
+const TEXT_FIELD_LABEL = { name: '系统名称', desc: '系统说明', symbol: '品种', reason: '开仓理由', note: '备注', date: '日期', shots: '截图标签' };
 
 /**
  * 找出第一处存不进去的字符（8.4：22P05、22P02 时指给用户看）。
@@ -307,7 +307,7 @@ export function validateJournal(j) {
       if (typeof shot.id !== 'string' || !shot.id.startsWith('sh_') || !ID_PATTERN.test(shot.id)) bad('shots', at + '的 id 必须以 sh_ 开头');
       else if (seen.has(shot.id)) bad('shots', at + '的 id 和别处重复');
       else seen.add(shot.id);
-      if (shot.label !== 'open' && shot.label !== 'close' && shot.label !== '') bad('shots', at + '的标签（label）必须是 "open"、"close" 或空串');
+      if (typeof shot.label !== 'string') bad('shots', at + '的标签（label）必须是字符串（"open"、"close"、空串或自己写的字）');
       if (typeof shot.file !== 'string') bad('shots', at + '的文件路径（file）必须是字符串');
       if (shot.thumb !== undefined && typeof shot.thumb !== 'string') bad('shots', at + '的缩略图路径（thumb）必须是字符串');
       for (const f of ['width', 'height', 'bytes']) {

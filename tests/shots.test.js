@@ -12,7 +12,7 @@ import { ImageError } from '../src/images.js';
 import { createFakeIndexedDB } from './fakes.js';
 import {
   addShot, deleteShot, setShotLabel, createUrlCache, getShotBlob, defaultLabel, shotPaths, nextLabel,
-  LABELS, LABEL_TEXT, ShotError,
+  LABELS, LABEL_TEXT, LABEL_MAX, normalizeLabel, ShotError,
 } from '../src/shots.js';
 
 const sampleText = readFileSync(new URL('../fixtures/sample-journal.json', import.meta.url), 'utf8');
@@ -477,7 +477,22 @@ test('撤销时文件写回失败：元数据照样放回，错误交给 ctx.onE
 
 // ---------- setShotLabel ----------
 
-test('setShotLabel：改标签、按 nextLabel 循环；不认识的标签、找不到、没变化、只读时返回 false；不认识的字段原样保留', async () => {
+test('normalizeLabel：开仓时/平仓后存成 open/close，空和"无"存空串，自己打的字去空白、截到 LABEL_MAX 个字', () => {
+  assert.equal(normalizeLabel('开仓时'), 'open');
+  assert.equal(normalizeLabel(' 平仓后 '), 'close');
+  assert.equal(normalizeLabel('open'), 'open');
+  assert.equal(normalizeLabel(''), '');
+  assert.equal(normalizeLabel('   '), '');
+  assert.equal(normalizeLabel('无'), '');
+  assert.equal(normalizeLabel('  回踩  确认 '), '回踩 确认');
+  assert.equal(normalizeLabel('加仓\u0000'), '加仓');
+  assert.equal(normalizeLabel('字'.repeat(LABEL_MAX + 5)), '字'.repeat(LABEL_MAX));
+  assert.equal(normalizeLabel('😀'.repeat(LABEL_MAX + 1)), '😀'.repeat(LABEL_MAX), '按字数截，不切坏表情');
+  assert.equal(normalizeLabel(null), null);
+  assert.equal(normalizeLabel(3), null);
+});
+
+test('setShotLabel：改标签、可以写自己的字；不是字符串、找不到、没变化、只读时返回 false；不认识的字段原样保留', async () => {
   const j = journal();
   j.rows[2].shots = [{ id: 'sh_k', label: 'open', file: 'shots/t_done/sh_k.webp', thumb: 'shots/t_done/sh_k.thumb.webp', future: { x: 1 } }];
   const { store, ctx } = setup({ j });
@@ -492,7 +507,12 @@ test('setShotLabel：改标签、按 nextLabel 循环；不认识的标签、找
   assert.equal(setShotLabel(ctx, 't_open', a.id, nextLabel('close')), true);
   assert.equal(shotsOf(store, 't_open')[0].label, '');
   assert.equal(setShotLabel(ctx, 't_open', a.id, ''), false, '没变化');
-  assert.equal(setShotLabel(ctx, 't_open', a.id, 'later'), false);
+  assert.equal(setShotLabel(ctx, 't_open', a.id, '无'), false, '"无"就是空标签，没变化');
+  assert.equal(setShotLabel(ctx, 't_open', a.id, ' 第二次加仓 '), true);
+  assert.equal(shotsOf(store, 't_open')[0].label, '第二次加仓');
+  assert.equal(setShotLabel(ctx, 't_open', a.id, '开仓时'), true);
+  assert.equal(shotsOf(store, 't_open')[0].label, 'open', '打"开仓时"存回 open');
+  assert.equal(setShotLabel(ctx, 't_open', a.id, ''), true);
   assert.equal(setShotLabel(ctx, 't_open', a.id, null), false);
   assert.equal(setShotLabel(ctx, 't_open', 'sh_nope', 'open'), false);
   assert.equal(setShotLabel(ctx, 't_nope', a.id, 'open'), false);

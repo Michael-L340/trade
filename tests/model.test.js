@@ -155,7 +155,7 @@ test('validateJournal：各种结构错误', () => {
       'oops',
       { type: 'memo', id: 'm_1' },
       { type: 'system', id: 'x_1', name: '', desc: '' },
-      { type: 'trade', id: 't_a', date: '2026-09-01', symbol: '', direction: 'long', rr: null, risk: null, result: null, pnlOverride: null, reason: '', note: '', shots: [{ id: 'bad', label: 'mid', file: 3, width: -1 }] },
+      { type: 'trade', id: 't_a', date: '2026-09-01', symbol: '', direction: 'long', rr: null, risk: null, result: null, pnlOverride: null, reason: '', note: '', shots: [{ id: 'bad', label: 3, file: 3, width: -1 }] },
       { type: 'trade', id: 't_b', date: '2026-09-01', symbol: '', direction: 'long', rr: null, risk: null, result: null, pnlOverride: 'x', reason: '', note: null },
     ],
   });

@@ -10,8 +10,8 @@
 //     右边"上一笔"、"下一笔"（只在交易行之间跳，跳过系统行）和"关闭"。
 //   - 左栏是截图。传了 opts.shots（main.js 给，怎么传见 sheet.js 的 shotApi）才是真的截图功能：
 //     · 当前选中的那张在 16:9 的区域里完整显示，点它在新标签页打开原图（<a target="_blank">，blob: 地址）；
-//     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 平仓后 / 无）。点缩略图换大图，点标签在三种之间
-//       循环；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
+//     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 平仓后 / 自己打的字 / 无）。点缩略图换大图，
+//       点标签变成文本框直接打字（回车或点别处保存，Esc 不改；清空就是"无"）；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
 //       撤销把文件和记录都放回来；
 //     · 缩略图右边是虚线框"Ctrl+V 粘贴截图"：点它选图片文件（可以多选），也可以把图片文件拖进弹层；
 //       弹层开着时在页面上任何地方按 Ctrl+V，剪贴板里有图片就加到这一笔（光标在文本框里、剪贴板里又有文字时
@@ -34,8 +34,9 @@
 import { fmtR, fmtMoney, fmtRR, fmtDirection, OUTCOME_LABEL, DASH } from '../format.js';
 import { confirmDialog, showToast } from './toast.js';
 import {
-  errorText, nextShotLabel, pasteWantsImage, readTransfer, shotApi, shotFilePath, shotLabelText, shotThumbPath,
+  errorText, hasShotLabel, pasteWantsImage, readTransfer, shotApi, shotFilePath, shotLabelText, shotThumbPath,
 } from './sheet.js';
+import { LABEL_MAX } from '../shots.js';
 
 const CHIP_CLASS = Object.freeze({ win: 'win', loss: 'loss', breakeven: 'flat', open: 'open', invalid: 'open' });
 const READ_ONLY_TITLE = Object.freeze({
@@ -53,7 +54,7 @@ const HINT_NOT_READY = '截图功能还没接入，下一步再做。';
 const HINT_PASTED = '截图功能还没接入（下一步做），刚才粘贴的图片没有保存。';
 const HINT_MS = 4000;
 const HINT_ERROR_MS = 8000;
-const LABEL_TITLE = '点一下切换：开仓时 → 平仓后 → 无';
+const LABEL_TITLE = '点一下改标签：直接打字，回车保存，Esc 取消';
 
 let mountCount = 0;
 
@@ -390,9 +391,9 @@ export function mountDetail(root, store, opts = {}) {
     const lab = itemRoot.appendChild(button('lab'));
     lab.title = LABEL_TITLE;
     const del = itemRoot.appendChild(button('thumb-del', '删除'));
-    const item = { id, root: itemRoot, pick, lab, del, path: null, held: false };
+    const item = { id, root: itemRoot, pick, lab, del, path: null, held: false, edit: null };
     pick.addEventListener('click', () => selectShot(id));
-    lab.addEventListener('click', () => cycleLabel(id));
+    lab.addEventListener('click', () => editLabel(item));
     del.addEventListener('click', () => { deleteShotFlow(id); });
     items.set(id, item);
     return item;
@@ -400,14 +401,14 @@ export function mountDetail(root, store, opts = {}) {
 
   function updateItem(item, shot, k) {
     const current = shot.id === curShotId;
-    const named = shot.label === 'open' || shot.label === 'close';
+    const named = hasShotLabel(shot.label);
     const text = shotLabelText(shot.label);
     item.root.classList.toggle('current', current);
     item.pick.setAttribute('aria-pressed', current ? 'true' : 'false');
     item.pick.setAttribute('aria-label', `第 ${k + 1} 张截图${named ? '（' + text + '）' : ''}：在上面看大图`);
     setText(item.lab, text);
     item.lab.classList.toggle('unset', !named);
-    item.lab.setAttribute('aria-label', `第 ${k + 1} 张的标签：${text}。点一下换成${shotLabelText(nextShotLabel(shot.label))}`);
+    item.lab.setAttribute('aria-label', `第 ${k + 1} 张的标签：${text}。点一下改`);
     item.del.setAttribute('aria-label', `删除第 ${k + 1} 张截图`);
     const path = shotThumbPath(shot);
     if (item.path !== path) setItemPath(item, path);
@@ -473,7 +474,7 @@ export function mountDetail(root, store, opts = {}) {
       showBigText(NO_SHOT_TEXT, store.canEdit() ? NO_SHOT_HELP : '');
       return;
     }
-    const named = shot.label === 'open' || shot.label === 'close';
+    const named = hasShotLabel(shot.label);
     bigAlt = `第 ${it.no} 笔的第 ${k + 1} 张截图${named ? '（' + shotLabelText(shot.label) + '）' : ''}`;
     bigLink.setAttribute('aria-label', bigAlt + '：在新标签页打开原图');
     bigLink.title = '点一下在新标签页打开原图';
@@ -537,19 +538,53 @@ export function mountDetail(root, store, opts = {}) {
     fill(false);
   }
 
-  /** 点标签：开仓时 → 平仓后 → 无 → 开仓时 */
-  function cycleLabel(id) {
-    if (openId === null || !shotsApi.setShotLabel) return;
+  /** 点标签：标签变成文本框，回车或点别处保存，Esc 不改。清空保存就是"无" */
+  function editLabel(item) {
+    if (openId === null || !shotsApi.setShotLabel || item.edit) return;
     if (!store.canEdit()) {
       showHint(readOnlyText());
       return;
     }
-    const shot = shotOf(openId, id);
+    const tradeId = openId;
+    const shot = shotOf(tradeId, item.id);
     if (!shot) return;
+    const input = el('input', 'lab-input');
+    input.type = 'text';
+    input.maxLength = LABEL_MAX;
+    input.value = hasShotLabel(shot.label) ? shotLabelText(shot.label) : '';
+    input.placeholder = '写个标签';
+    input.setAttribute('aria-label', '截图标签，回车保存，Esc 不改');
+    item.edit = input;
+    item.lab.hidden = true;
+    item.root.insertBefore(input, item.lab);
+    input.focus();
+    input.select();
+    let done = false;
+    // byKey：按回车、Esc 结束的，焦点回到标签上；点别处结束的，焦点留在点到的地方
+    const finish = (save, byKey) => {
+      if (done) return;
+      done = true;
+      const text = input.value;
+      item.edit = null;
+      item.lab.hidden = false;
+      if (byKey) item.lab.focus();
+      input.remove();
+      if (save) saveLabel(tradeId, item.id, text);
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return; // 输入法组字时的回车、Esc 归输入法
+      if (e.key === 'Enter') { e.preventDefault(); finish(true, true); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false, true); }
+    });
+    input.addEventListener('blur', () => finish(true, false));
+  }
+
+  function saveLabel(tradeId, shotId, text) {
+    if (!store.canEdit()) return;
     const fail = (err) => showHint('标签没改成：' + errorText(err), HINT_ERROR_MS);
     let r;
     try {
-      r = shotsApi.setShotLabel(openId, id, nextShotLabel(shot.label));
+      r = shotsApi.setShotLabel(tradeId, shotId, text);
     } catch (err) {
       fail(err);
       return;
@@ -569,7 +604,7 @@ export function mountDetail(root, store, opts = {}) {
     const list = it && Array.isArray(it.t.shots) ? it.t.shots : [];
     const k = list.findIndex((s) => s && s.id === id);
     if (k === -1) return;
-    const named = list[k].label === 'open' || list[k].label === 'close';
+    const named = hasShotLabel(list[k].label);
     const what = `第 ${it.no} 笔的第 ${k + 1} 张截图${named ? '（' + shotLabelText(list[k].label) + '）' : ''}`;
     const ok = await confirmDialog({
       title: `删除第 ${k + 1} 张截图？`,

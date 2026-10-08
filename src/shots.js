@@ -22,12 +22,27 @@
 
 import { processImage as defaultProcessImage } from './images.js';
 import { deriveTrade } from './calc.js';
-import { isoNow, newId } from './model.js';
+import { cleanText, isoNow, newId } from './model.js';
 
-/** 截图标签的三种取值（第 5 节）：开仓时、平仓后、不显示 */
+/** 截图标签的三种固定取值（第 5 节）：开仓时、平仓后、不显示。也可以是用户自己打的字（normalizeLabel） */
 export const LABELS = Object.freeze(['open', 'close', '']);
+/** 自己打的标签最多几个字（缩略图下面一行放得下） */
+export const LABEL_MAX = 20;
 /** 标签在界面上的文字（详情里缩略图下方；空标签显示"无"） */
 export const LABEL_TEXT = Object.freeze({ open: '开仓时', close: '平仓后', '': '无' });
+
+/**
+ * 用户在标签上打的字 → 存进 shots[].label 的值：去掉首尾空白、连续空白并成一个、最多 LABEL_MAX 个字；
+ * 打"开仓时"存 'open'、"平仓后"存 'close'，空着或打"无"存 ''，其余原样存。不是字符串返回 null。
+ */
+export function normalizeLabel(text) {
+  if (typeof text !== 'string') return null;
+  const t = Array.from(cleanText(text).replace(/\s+/g, ' ').trim()).slice(0, LABEL_MAX).join('').trim();
+  if (t === '' || t === '无') return '';
+  if (t === 'open' || t === LABEL_TEXT.open) return 'open';
+  if (t === 'close' || t === LABEL_TEXT.close) return 'close';
+  return t;
+}
 
 /** 点标签时的下一个：开仓时 → 平仓后 → 无 → 开仓时 */
 export function nextLabel(label) {
@@ -416,12 +431,13 @@ function makeUndo(c, { tradeId, shot, index, demo, saved }) {
 }
 
 /**
- * 改一张截图的标签（'open'、'close' 或 ''）。界面点标签时传 nextLabel(当前标签)。
- * @returns {boolean} 改了返回 true；标签不认识、找不到、没变化、只读时返回 false
+ * 改一张截图的标签：'open'、'close'、''，或者用户打的字（先过 normalizeLabel，"开仓时"会存成 'open'）。
+ * @returns {boolean} 改了返回 true；不是字符串、找不到、没变化、只读时返回 false
  */
-export function setShotLabel(ctx, tradeId, shotId, label) {
+export function setShotLabel(ctx, tradeId, shotId, text) {
   const c = context(ctx);
-  if (!LABELS.includes(label) || !canEdit(c)) return false;
+  const label = normalizeLabel(text);
+  if (label === null || !canEdit(c)) return false;
   const trade = findTrade(c, tradeId);
   const list = shotsOf(trade);
   const i = list.findIndex((s) => s && s.id === shotId);

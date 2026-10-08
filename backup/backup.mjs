@@ -179,7 +179,7 @@ export function validateDoc(doc) {
       if (!isObj(s)) { bad(sat + '不是对象'); return; }
       if (typeof s.id !== 'string' || !s.id.startsWith('sh_') || !ID_PATTERN.test(s.id)) bad(sat + '的 id 必须以 sh_ 开头');
       else useId(s.id, `${at}${sat}`);
-      if (s.label !== 'open' && s.label !== 'close' && s.label !== '') bad(sat + '的 label 必须是 open、close 或空串');
+      if (typeof s.label !== 'string') bad(sat + '的 label 必须是字符串（open、close、空串或自己写的字）');
       if (!shotPathOk(s.file, row.id)) bad(`${sat}的 file 必须在 shots/${row.id}/ 下，实际是 ${JSON.stringify(s.file)}`);
       if (s.thumb !== undefined && !shotPathOk(s.thumb, row.id)) bad(`${sat}的 thumb 必须在 shots/${row.id}/ 下，实际是 ${JSON.stringify(s.thumb)}`);
       for (const f of ['width', 'height', 'bytes']) {

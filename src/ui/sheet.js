@@ -343,9 +343,15 @@ export function readOnlyMessage(reason) {
 /** 截图标签的显示文字（第 5 节）。空标签在详情里也要能点着切换，所以显示一个"无" */
 export const SHOT_LABEL_TEXT = Object.freeze({ open: '开仓时', close: '平仓后', '': '无' });
 
-/** 标签的显示文字；不认识的当成空标签 */
+/** 标签的显示文字：open、close 换成中文，自己打的字原样显示；空的、不是字符串的显示"无" */
 export function shotLabelText(label) {
-  return label === 'open' || label === 'close' ? SHOT_LABEL_TEXT[label] : SHOT_LABEL_TEXT[''];
+  if (label === 'open' || label === 'close') return SHOT_LABEL_TEXT[label];
+  return typeof label === 'string' && label !== '' ? label : SHOT_LABEL_TEXT[''];
+}
+
+/** 这张截图有没有标签（空标签的缩略图下面显示灰色的"无"） */
+export function hasShotLabel(label) {
+  return typeof label === 'string' && label !== '';
 }
 
 /** 点标签时换成哪个：开仓时 → 平仓后 → 无 → 开仓时 */

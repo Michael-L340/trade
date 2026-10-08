@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import {
   COLUMNS, NAV_COLUMNS, NEWLINE_MARK, nextCell, keyAction, resultForKey, isComposingKey, interpretInput, liveValue,
   emptyRowPatch, toCellText, fromCellText, tradeCellText, missingFlags, outcomeChip, headerLabel, segmentHint,
-  readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
+  readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, hasShotLabel, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
   pasteWantsImage, pickShotLabel, shotUrls, shotApi, errorText, PNL_WORDS,
 } from '../src/ui/sheet.js';
 import { pickCurrentShot } from '../src/ui/detail.js';
@@ -324,7 +324,12 @@ test('截图标签：显示文字，点一下换成哪个（开仓时 → 平仓
   assert.equal(shotLabelText('open'), '开仓时');
   assert.equal(shotLabelText('close'), '平仓后');
   assert.equal(shotLabelText(''), '无');
-  assert.equal(shotLabelText(undefined), '无', '不认识的当成空标签');
+  assert.equal(shotLabelText(undefined), '无', '不是字符串的当成空标签');
+  assert.equal(shotLabelText('回踩确认'), '回踩确认', '自己打的字原样显示');
+  assert.equal(hasShotLabel('open'), true);
+  assert.equal(hasShotLabel('回踩确认'), true);
+  assert.equal(hasShotLabel(''), false);
+  assert.equal(hasShotLabel(undefined), false);
   assert.equal(nextShotLabel('open'), 'close');
   assert.equal(nextShotLabel('close'), '');
   assert.equal(nextShotLabel(''), 'open');
