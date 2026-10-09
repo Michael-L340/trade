@@ -16,8 +16,8 @@
 # 回退只用 git revert 生成新提交再发布一次，版本号照常往上加；不要 reset 加 force push。
 set -euo pipefail
 
-REPO="Michael-L340/trade-journal"
-SITE="https://michael-l340.github.io/trade-journal/"
+REPO="Michael-L340/trade"
+SITE="https://michael-l340.github.io/trade/"
 BUMP="${1:-patch}"
 
 cd "$(dirname "$0")/.."

@@ -2,7 +2,7 @@
 
 只给自己用的交易日志网站。像 Excel 一样一行记一笔交易；可以同时用几个交易系统，每个系统一块（深蓝色系统行 + 它的交易），各系统单独统计，顶部统计和曲线按日期合起来算；盈亏格右边的小字是这一笔实际赚了几个 R；自动算胜率、实际盈亏比、期望值等，并画累计 R 曲线。蓝色表示盈利，橙色表示亏损。
 
-纯静态网页（原生 HTML/CSS/JavaScript，没有构建步骤、没有框架、不装依赖），部署在 GitHub Pages：<https://michael-l340.github.io/trade-journal/>。
+纯静态网页（原生 HTML/CSS/JavaScript，没有构建步骤、没有框架、不装依赖），部署在 GitHub Pages：<https://michael-l340.github.io/trade/>（仓库 `Michael-L340/trade`；2026-10-09 前叫 trade-journal，旧网址 /trade-journal/ 已作废）。
 
 数据先存在这个浏览器里（IndexedDB），断网照常记。连接云端（Supabase，和记账共用同一个项目，见下面"连接云端"）并登录后，自动同步到云端，换电脑登录就能看到全部数据和截图。没连接、没登录时数据只在这个浏览器里，请在设置页定期"导出 journal.json"备份。
 
