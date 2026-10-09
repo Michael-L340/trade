@@ -1,7 +1,7 @@
 {
   "name": "trade-journal",
   "private": true,
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "只告诉 Node 这些 .js 是 ES 模块，没有任何依赖。",
   "type": "module",
   "scripts": {
