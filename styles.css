@@ -397,16 +397,24 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .thumb-item { position: relative; }
 .thumb-item .thumb-pick.note { display: flex; align-items: center; justify-content: center; border-style: dashed; }
 .thumb-note { padding: 0 8px; color: var(--ink-3); font-size: 12px; line-height: 1.4; text-align: center; }
+/* 标签一行：左边标签（点了切换），右边小笔（点了打字） */
+.thumb-item .lab-row { display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 24px; margin-top: 2px; }
+.thumb-item .lab-row[hidden] { display: none; }
 .thumb-item .lab {
-  display: block; width: 100%; height: auto; min-height: 24px; margin-top: 2px; padding: 2px 0;
+  display: block; width: auto; max-width: calc(100% - 26px); height: auto; min-height: 24px; padding: 2px 4px;
   border: 0; background: transparent; cursor: pointer; font-size: 12px; line-height: 1.4; color: var(--ink-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.thumb-item .lab[hidden] { display: none; }
+.thumb-item .lab-pen {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; padding: 0;
+  border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.thumb-item .lab-pen svg { width: 13px; height: 13px; }
+.thumb-item .lab-pen:hover { color: var(--accent); background: var(--sel); }
 .thumb-item .lab:hover { color: var(--accent); text-decoration: underline; }
 .thumb-item .lab.unset { color: var(--ink-3); }
 .thumb-item .lab-input {
-  display: block; width: 100%; height: 24px; margin-top: 2px; padding: 0 6px; box-sizing: border-box;
+  display: block; width: 100%; height: 26px; margin-top: 1px; padding: 0 6px; box-sizing: border-box;
   border: 1px solid var(--accent); background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; text-align: center;
 }
 .thumb-item .lab-input:focus { outline: none; box-shadow: 0 0 0 2px var(--sel); }
@@ -420,8 +428,9 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .thumb-item .thumb-del:hover { background: var(--ink); }
 @media (hover: none) { .thumb-item .thumb-del { opacity: 1; } }
 /* 当前那张的蓝框只给缩略图本身，不给标签和"删除"；它们有自己的焦点框 */
-.thumb-item.current .lab, .thumb-item.current .thumb-del { outline: none; }
-.thumb-item .lab:focus-visible, .thumb-item.current .lab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.thumb-item.current .lab, .thumb-item.current .lab-pen, .thumb-item.current .thumb-del { outline: none; }
+.thumb-item .lab:focus-visible, .thumb-item.current .lab:focus-visible,
+.thumb-item .lab-pen:focus-visible, .thumb-item.current .lab-pen:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .thumb-item .thumb-del:focus-visible, .thumb-item.current .thumb-del:focus-visible { outline: 2px solid #FFFFFF; outline-offset: -4px; }
 /* 虚线框"Ctrl+V 粘贴截图"：点了选文件；拖着图片文件进弹层时变成蓝框 */
 .paste-box { flex-direction: column; gap: 2px; }

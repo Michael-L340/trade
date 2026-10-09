@@ -10,8 +10,9 @@
 //     右边"上一笔"、"下一笔"（只在交易行之间跳，跳过系统行）和"关闭"。
 //   - 左栏是截图。传了 opts.shots（main.js 给，怎么传见 sheet.js 的 shotApi）才是真的截图功能：
 //     · 当前选中的那张在 16:9 的区域里完整显示，点它在新标签页打开原图（<a target="_blank">，blob: 地址）；
-//     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 平仓后 / 自己打的字 / 无）。点缩略图换大图，
-//       点标签变成文本框直接打字（回车或点别处保存，Esc 不改；清空就是"无"）；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
+//     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 平仓后 / 自己写的字 / 无）。点缩略图换大图；
+//       点标签在 开仓时 → 平仓后 → 无 之间循环（自己写的再点回到开仓时）；点标签旁边的小笔变成文本框打字
+//       （回车或点别处保存，Esc 不改；清空就是"无"）；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
 //       撤销把文件和记录都放回来；
 //     · 缩略图右边是虚线框"Ctrl+V 粘贴截图"：点它选图片文件（可以多选），也可以把图片文件拖进弹层；
 //       弹层开着时在页面上任何地方按 Ctrl+V，剪贴板里有图片就加到这一笔（光标在文本框里、剪贴板里又有文字时
@@ -34,7 +35,7 @@
 import { fmtR, fmtMoney, fmtRR, fmtDirection, OUTCOME_LABEL, DASH } from '../format.js';
 import { confirmDialog, showToast } from './toast.js';
 import {
-  errorText, hasShotLabel, pasteWantsImage, readTransfer, shotApi, shotFilePath, shotLabelText, shotThumbPath,
+  errorText, hasShotLabel, nextShotLabel, pasteWantsImage, readTransfer, shotApi, shotFilePath, shotLabelText, shotThumbPath,
 } from './sheet.js';
 import { LABEL_MAX } from '../shots.js';
 
@@ -54,7 +55,8 @@ const HINT_NOT_READY = '截图功能还没接入，下一步再做。';
 const HINT_PASTED = '截图功能还没接入（下一步做），刚才粘贴的图片没有保存。';
 const HINT_MS = 4000;
 const HINT_ERROR_MS = 8000;
-const LABEL_TITLE = '点一下改标签：直接打字，回车保存，Esc 取消';
+const LABEL_TITLE = '点一下切换：开仓时 → 平仓后 → 无';
+const PEN_TITLE = '自己写标签：回车或点别处保存，Esc 不改';
 
 let mountCount = 0;
 
@@ -70,6 +72,21 @@ function button(cls, text, label) {
   b.type = 'button';
   if (label) b.setAttribute('aria-label', label);
   return b;
+}
+
+/** 标签旁边那支小笔（13×13，跟文字颜色走） */
+function penIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = svg.appendChild(document.createElementNS(NS, 'path'));
+  path.setAttribute('d', 'M10.5 2.5l3 3L5 14H2v-3z');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.6');
+  path.setAttribute('stroke-linejoin', 'round');
+  return svg;
 }
 
 function setText(node, text) {
@@ -388,12 +405,17 @@ export function mountDetail(root, store, opts = {}) {
   function buildItem(id) {
     const itemRoot = el('div', 'thumb-item');
     const pick = itemRoot.appendChild(button('thumb-pick'));
-    const lab = itemRoot.appendChild(button('lab'));
+    const row = itemRoot.appendChild(el('div', 'lab-row'));
+    const lab = row.appendChild(button('lab'));
     lab.title = LABEL_TITLE;
+    const pen = row.appendChild(button('lab-pen'));
+    pen.title = PEN_TITLE;
+    pen.appendChild(penIcon());
     const del = itemRoot.appendChild(button('thumb-del', '删除'));
-    const item = { id, root: itemRoot, pick, lab, del, path: null, held: false, edit: null };
+    const item = { id, root: itemRoot, pick, row, lab, pen, del, path: null, held: false, edit: null };
     pick.addEventListener('click', () => selectShot(id));
-    lab.addEventListener('click', () => editLabel(item));
+    lab.addEventListener('click', () => cycleLabel(id));
+    pen.addEventListener('click', () => editLabel(item));
     del.addEventListener('click', () => { deleteShotFlow(id); });
     items.set(id, item);
     return item;
@@ -408,7 +430,8 @@ export function mountDetail(root, store, opts = {}) {
     item.pick.setAttribute('aria-label', `第 ${k + 1} 张截图${named ? '（' + text + '）' : ''}：在上面看大图`);
     setText(item.lab, text);
     item.lab.classList.toggle('unset', !named);
-    item.lab.setAttribute('aria-label', `第 ${k + 1} 张的标签：${text}。点一下改`);
+    item.lab.setAttribute('aria-label', `第 ${k + 1} 张的标签：${text}。点一下换成${shotLabelText(nextShotLabel(shot.label))}`);
+    item.pen.setAttribute('aria-label', `第 ${k + 1} 张：自己写标签`);
     item.del.setAttribute('aria-label', `删除第 ${k + 1} 张截图`);
     const path = shotThumbPath(shot);
     if (item.path !== path) setItemPath(item, path);
@@ -538,7 +561,18 @@ export function mountDetail(root, store, opts = {}) {
     fill(false);
   }
 
-  /** 点标签：标签变成文本框，回车或点别处保存，Esc 不改。清空保存就是"无" */
+  /** 点标签：开仓时 → 平仓后 → 无 → 开仓时；自己写的标签点了回到开仓时 */
+  function cycleLabel(id) {
+    if (openId === null || !shotsApi.setShotLabel) return;
+    if (!store.canEdit()) {
+      showHint(readOnlyText());
+      return;
+    }
+    const shot = shotOf(openId, id);
+    if (shot) saveLabel(openId, id, nextShotLabel(shot.label));
+  }
+
+  /** 点小笔：标签变成文本框，回车或点别处保存，Esc 不改。清空保存就是"无" */
   function editLabel(item) {
     if (openId === null || !shotsApi.setShotLabel || item.edit) return;
     if (!store.canEdit()) {
@@ -555,19 +589,19 @@ export function mountDetail(root, store, opts = {}) {
     input.placeholder = '写个标签';
     input.setAttribute('aria-label', '截图标签，回车保存，Esc 不改');
     item.edit = input;
-    item.lab.hidden = true;
-    item.root.insertBefore(input, item.lab);
+    item.row.hidden = true;
+    item.root.insertBefore(input, item.row);
     input.focus();
     input.select();
     let done = false;
-    // byKey：按回车、Esc 结束的，焦点回到标签上；点别处结束的，焦点留在点到的地方
+    // byKey：按回车、Esc 结束的，焦点回到小笔上；点别处结束的，焦点留在点到的地方
     const finish = (save, byKey) => {
       if (done) return;
       done = true;
       const text = input.value;
       item.edit = null;
-      item.lab.hidden = false;
-      if (byKey) item.lab.focus();
+      item.row.hidden = false;
+      if (byKey) item.pen.focus();
       input.remove();
       if (save) saveLabel(tradeId, item.id, text);
     };
@@ -741,6 +775,7 @@ export function mountDetail(root, store, opts = {}) {
       if (can) item.lab.removeAttribute('aria-disabled');
       else item.lab.setAttribute('aria-disabled', 'true');
       item.lab.title = can ? LABEL_TITLE : why;
+      if (item.pen.hidden !== !can) item.pen.hidden = !can;
     }
     if (openId !== null && curShotId === null) showBigText(NO_SHOT_TEXT, can ? NO_SHOT_HELP : '');
   }
