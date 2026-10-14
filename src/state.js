@@ -14,13 +14,15 @@
 //             reason 为 'currency' 时 ids 是全部行，表头和金额格要换单位；
 //   'journal' 整份数据换了（载入、恢复、进出示例模式）：整表重建；
 //   'ui'      只有界面状态变了（选中行、保存状态、只读）。
+//   'study'   学习板块（journal.study）变了：ids 是改动的主题、知识点或学习卡；交易表不用动。
 //   不论哪种数据事件，系统行小计、顶部统计、曲线和空行的灰色默认值都要跟着刷新（都很便宜）。
 
 import { deriveJournal, deriveTrade, EPS } from './calc.js';
 import { parseNumber, todayLocal } from './format.js';
 import {
-  newSystemRow, newTrade, normalizeJournal, emptyJournal, sanitizeTradePatch, sanitizeSystemPatch, cleanText, isoNow,
+  newSystemRow, newTrade, normalizeJournal, emptyJournal, sanitizeTradePatch, sanitizeSystemPatch, cleanText, isoNow, newId,
 } from './model.js';
+import { cleanName, emptyStudy, LONG_MAX, renumberPins, sanitizeCardPatch } from './study.js';
 
 function deepFreeze(v) {
   if (v !== null && typeof v === 'object' && !Object.isFrozen(v)) {
@@ -125,7 +127,69 @@ export function createStore(initial, opts = {}) {
       taken.add(r.id);
       if (Array.isArray(r.shots)) for (const s of r.shots) taken.add(s.id);
     }
+    const st = journal.study;
+    if (st) {
+      for (const tp of st.topics || []) { taken.add(tp.id); for (const it of tp.items) taken.add(it.id); }
+      for (const c of st.cards || []) taken.add(c.id);
+    }
     return taken;
+  }
+
+  // ---------- 学习板块 ----------
+  const study = () => journal.study || emptyStudy();
+  function commitStudy(next, ev) {
+    commit({ ...journal, study: next }, { type: 'study', ...ev });
+  }
+  const topicIndex = (id) => study().topics.findIndex((t) => t.id === id);
+  /** 知识点 id → [主题下标, 知识点下标]；找不到返回 null */
+  function itemIndex(id) {
+    const topics = study().topics;
+    for (let i = 0; i < topics.length; i++) {
+      const k = topics[i].items.findIndex((it) => it.id === id);
+      if (k >= 0) return [i, k];
+    }
+    return null;
+  }
+  const cardIndex = (id) => study().cards.findIndex((c) => c.id === id);
+  const longText = (s) => Array.from(cleanText(String(s ?? ''))).slice(0, LONG_MAX).join('');
+
+  /**
+   * 删掉主题、知识点或卡片后的撤销：把删掉的东西按原来的位置放回去（已经有同 id 的就不放）。
+   * removed = { topic?: {value, index}, item?: {value, topicId, index}, cards: [{value, index}] }
+   */
+  function makeStudyUndo(removed) {
+    const myEpoch = epoch;
+    let used = false;
+    return function undo() {
+      if (used || epoch !== myEpoch || !canEdit()) return false;
+      used = true;
+      const cur = study();
+      const topics = cur.topics.map((t) => ({ ...t, items: t.items.slice() }));
+      if (removed.topic && !topics.some((t) => t.id === removed.topic.value.id)) {
+        topics.splice(Math.min(removed.topic.index, topics.length), 0, removed.topic.value);
+      }
+      if (removed.item) {
+        const tp = topics.find((t) => t.id === removed.item.topicId);
+        if (!tp) return false;
+        if (!tp.items.some((it) => it.id === removed.item.value.id)) tp.items.splice(Math.min(removed.item.index, tp.items.length), 0, removed.item.value);
+      }
+      const cards = cur.cards.slice();
+      const have = new Set(cards.map((c) => c.id));
+      for (const { value, index } of removed.cards.slice().sort((a, b) => a.index - b.index)) {
+        if (!have.has(value.id)) cards.splice(Math.min(index, cards.length), 0, value);
+      }
+      const ids = [removed.topic && removed.topic.value.id, removed.item && removed.item.value.id, ...removed.cards.map((c) => c.value.id)].filter(Boolean);
+      commitStudy({ ...cur, topics, cards }, { ids, reason: 'undo' });
+      return true;
+    };
+  }
+
+  /** 去掉 item 在 itemIds 里的卡片，返回 [剩下的卡片, 删掉的 {value, index}] */
+  function dropCards(itemIds) {
+    const removed = [];
+    const kept = [];
+    study().cards.forEach((c, i) => { if (itemIds.has(c.item)) removed.push({ value: c, index: i }); else kept.push(c); });
+    return [kept, removed];
   }
 
   function withRows(mutate) {
@@ -319,6 +383,147 @@ export function createStore(initial, opts = {}) {
       if (c === journal.currency) return false;
       commit({ ...journal, currency: c }, { type: 'rows', ids: journal.rows.map((r) => r.id), reason: 'currency' });
       return true;
+    },
+
+    // ---------- 学习板块：主题、知识点、学习卡 ----------
+
+    /** 新建主题（加在最后）。名字去掉首尾空白，空名字不建。返回新主题的 id。 */
+    addTopic(name) {
+      if (!canEdit()) return null;
+      const n = cleanName(name);
+      if (!n) return null;
+      const tp = { id: newId('tp_', takenIds()), name: n, items: [], createdAt: isoNow(now()) };
+      const cur = study();
+      commitStudy({ ...cur, topics: [...cur.topics, tp] }, { ids: [tp.id], reason: 'addTopic' });
+      return tp.id;
+    },
+
+    /** 主题改名。空名字不改。有变化返回 true。 */
+    renameTopic(id, name) {
+      if (!canEdit()) return false;
+      const i = topicIndex(id);
+      const n = cleanName(name);
+      if (i < 0 || !n || study().topics[i].name === n) return false;
+      const cur = study();
+      const topics = cur.topics.slice();
+      topics[i] = { ...topics[i], name: n };
+      commitStudy({ ...cur, topics }, { ids: [id], reason: 'renameTopic' });
+      return true;
+    },
+
+    /** 删除主题，连同它的知识点和这些知识点下的学习卡。返回撤销函数；没删成返回 null。 */
+    deleteTopic(id) {
+      if (!canEdit()) return null;
+      const i = topicIndex(id);
+      if (i < 0) return null;
+      const cur = study();
+      const tp = cur.topics[i];
+      const [cards, removedCards] = dropCards(new Set(tp.items.map((it) => it.id)));
+      commitStudy({ ...cur, topics: cur.topics.filter((t, k) => k !== i), cards }, { ids: [id, ...removedCards.map((c) => c.value.id)], reason: 'deleteTopic' });
+      return makeStudyUndo({ topic: { value: tp, index: i }, cards: removedCards });
+    },
+
+    /** 在某个主题下新建知识点（加在最后）。返回新知识点的 id。 */
+    addItem(topicId, name) {
+      if (!canEdit()) return null;
+      const i = topicIndex(topicId);
+      const n = cleanName(name);
+      if (i < 0 || !n) return null;
+      const it = { id: newId('kp_', takenIds()), name: n, note: '' };
+      const cur = study();
+      const topics = cur.topics.slice();
+      topics[i] = { ...topics[i], items: [...topics[i].items, it] };
+      commitStudy({ ...cur, topics }, { ids: [it.id], reason: 'addItem' });
+      return it.id;
+    },
+
+    /** 改知识点：name（空名字不改）、note（要点）。有变化返回 true。 */
+    updateItem(id, patch = {}) {
+      if (!canEdit()) return false;
+      const at = itemIndex(id);
+      if (!at) return false;
+      const cur = study();
+      const old = cur.topics[at[0]].items[at[1]];
+      const next = { ...old };
+      if (typeof patch.name === 'string') { const n = cleanName(patch.name); if (n) next.name = n; }
+      if (typeof patch.note === 'string') next.note = longText(patch.note);
+      if (next.name === old.name && next.note === old.note) return false;
+      const topics = cur.topics.slice();
+      const items = topics[at[0]].items.slice();
+      items[at[1]] = next;
+      topics[at[0]] = { ...topics[at[0]], items };
+      commitStudy({ ...cur, topics }, { ids: [id], reason: 'updateItem' });
+      return true;
+    },
+
+    /** 删除知识点，连同它下面的学习卡。返回撤销函数；没删成返回 null。 */
+    deleteItem(id) {
+      if (!canEdit()) return null;
+      const at = itemIndex(id);
+      if (!at) return null;
+      const cur = study();
+      const tp = cur.topics[at[0]];
+      const item = tp.items[at[1]];
+      const [cards, removedCards] = dropCards(new Set([id]));
+      const topics = cur.topics.slice();
+      topics[at[0]] = { ...tp, items: tp.items.filter((x, k) => k !== at[1]) };
+      commitStudy({ ...cur, topics, cards }, { ids: [id, ...removedCards.map((c) => c.value.id)], reason: 'deleteItem' });
+      return makeStudyUndo({ item: { value: item, topicId: tp.id, index: at[1] }, cards: removedCards });
+    },
+
+    /**
+     * 新建学习卡（放在最前面）。fields 按 sanitizeCardPatch 清洗；item 指向不存在的知识点时当成未归类。
+     * 返回新卡的 id。
+     */
+    addCard(fields = {}) {
+      if (!canEdit()) return null;
+      const ts = isoNow(now());
+      const clean = sanitizeCardPatch(fields).patch;
+      const card = {
+        id: newId('c_', takenIds()), item: '', title: '', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '',
+        img: null, marks: [], notes: [], createdAt: ts, updatedAt: ts,
+      };
+      Object.assign(card, clean);
+      if (card.item && !itemIndex(card.item)) card.item = '';
+      Object.assign(card, renumberPins(card.marks, card.notes));
+      const cur = study();
+      commitStudy({ ...cur, cards: [card, ...cur.cards] }, { ids: [card.id], reason: 'addCard' });
+      return card.id;
+    },
+
+    /**
+     * 改学习卡（title、kind、item、symbol、tf、source、trade、take、img、marks、notes）。
+     * 给了 marks 或 notes 时，编号点从 1 重新编号、说明跟着对上。有变化返回 true。
+     */
+    updateCard(id, patch) {
+      if (!canEdit()) return false;
+      const i = cardIndex(id);
+      if (i < 0) return false;
+      const cur = study();
+      const old = cur.cards[i];
+      const clean = sanitizeCardPatch(patch).patch;
+      if (clean.item && !itemIndex(clean.item)) delete clean.item;
+      if ('marks' in clean || 'notes' in clean) Object.assign(clean, renumberPins(clean.marks || old.marks, clean.notes || old.notes));
+      const fields = Object.keys(clean).filter((k) => !sameValue(old[k], clean[k]) && JSON.stringify(old[k]) !== JSON.stringify(clean[k]));
+      if (!fields.length) return false;
+      const next = { ...old };
+      for (const k of fields) next[k] = clean[k];
+      next.updatedAt = isoNow(now());
+      const cards = cur.cards.slice();
+      cards[i] = next;
+      commitStudy({ ...cur, cards }, { ids: [id], reason: 'updateCard', fields });
+      return true;
+    },
+
+    /** 删除学习卡。返回撤销函数；没删成返回 null。 */
+    deleteCard(id) {
+      if (!canEdit()) return null;
+      const i = cardIndex(id);
+      if (i < 0) return null;
+      const cur = study();
+      const card = cur.cards[i];
+      commitStudy({ ...cur, cards: cur.cards.filter((c, k) => k !== i) }, { ids: [id], reason: 'deleteCard' });
+      return makeStudyUndo({ cards: [{ value: card, index: i }] });
     },
 
     /**

@@ -27,6 +27,7 @@ import { formatJournal } from '../journal-format.js';
 import { classifyError } from './errors.js';
 import { deepCleanText, emptyJournal, findBadText, isoNow, normalizeJournal, stampAppVersion, versionGuard } from '../model.js';
 import { conflictSummary } from '../diff.js';
+import { studyFiles } from '../study.js';
 
 export const RETRY_DELAYS_MS = Object.freeze([5000, 15000, 60000]);
 export const POLL_MS = 60000;
@@ -54,13 +55,15 @@ export function loserFileName(source, now = new Date()) {
   return `journal-落选-${source === 'remote' ? '云端' : '本机'}-${stamp}.json`;
 }
 
-/** 这份本机数据算不算"没数据"：只有首次使用时自动建的空系统行 */
+/** 这份本机数据算不算"没数据"：只有首次使用时自动建的空系统行，学习板块也是空的 */
 export function isBlankJournal(j) {
   if (!j || !Array.isArray(j.rows)) return true;
+  const st = j.study;
+  if (st && ((Array.isArray(st.topics) && st.topics.length) || (Array.isArray(st.cards) && st.cards.length))) return false; // 学习板块里有东西
   return j.rows.every((r) => r && r.type === 'system' && !r.name && !r.desc);
 }
 
-/** 一份 doc 引用的全部截图文件路径（大图和缩略图） */
+/** 一份 doc 引用的全部截图文件路径（交易截图和学习卡的图，大图和缩略图） */
 export function referencedFiles(j) {
   const out = [];
   for (const r of j && Array.isArray(j.rows) ? j.rows : []) {
@@ -69,6 +72,7 @@ export function referencedFiles(j) {
       for (const p of [s && s.file, s && s.thumb]) if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
     }
   }
+  for (const p of studyFiles(j && j.study)) if (!out.includes(p)) out.push(p);
   return out;
 }
 

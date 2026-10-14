@@ -5,13 +5,19 @@
 //
 // - UTF-8，不加 BOM，换行 \n，末尾一个换行；中文原样写出。
 // - 顶层每个键一行（缩进 2 格）；rows 里每个 row 一行（缩进 4 格），row 本身是紧凑 JSON；没有行时写 "rows": []。
+// - 学习板块 study 是一个对象：它的每个键一行（缩进 4 格），topics、cards 里每个主题、每张卡一行（缩进 6 格，紧凑 JSON）。
 // - 已知键按固定顺序，缺的不补；不认识的键排在已知键后面，按原来的相对顺序（Object.keys 的顺序）原样写出，
 //   它们里面的嵌套对象也保持原来的顺序（5.1：旧代码不能悄悄丢掉或打乱新代码加的字段）。
 
-export const TOP_KEYS = Object.freeze(['schemaVersion', 'appVersion', 'currency', 'rows']);
+export const TOP_KEYS = Object.freeze(['schemaVersion', 'appVersion', 'currency', 'rows', 'study']);
 export const SYSTEM_KEYS = Object.freeze(['type', 'id', 'name', 'desc', 'createdAt']);
 export const TRADE_KEYS = Object.freeze(['type', 'id', 'date', 'symbol', 'direction', 'rr', 'risk', 'result', 'pnlOverride', 'reason', 'note', 'shots', 'createdAt', 'updatedAt']);
 export const SHOT_KEYS = Object.freeze(['id', 'label', 'file', 'thumb', 'width', 'height', 'bytes', 'addedAt']);
+export const STUDY_KEYS = Object.freeze(['topics', 'cards']);
+export const TOPIC_KEYS = Object.freeze(['id', 'name', 'items', 'createdAt']);
+export const ITEM_KEYS = Object.freeze(['id', 'name', 'note']);
+export const CARD_KEYS = Object.freeze(['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'notes', 'createdAt', 'updatedAt']);
+export const IMG_KEYS = Object.freeze(['file', 'thumb', 'width', 'height', 'bytes']);
 
 /** @param {unknown} v */
 function isPlainObject(v) {
@@ -67,6 +73,42 @@ function rowJson(/** @type {unknown} */ row) {
   ));
 }
 
+/** 按已知键排序的紧凑 JSON；nested 给某些键的值另配写法 */
+function knownJson(/** @type {unknown} */ v, /** @type {readonly string[]} */ known, /** @type {Record<string, (val: unknown) => string>} */ nested = {}) {
+  if (!isPlainObject(v)) return plainJson(v);
+  const o = /** @type {Record<string, unknown>} */ (v);
+  return objectJson(o, orderedKeys(o, known), (val, k) => (nested[k] ? nested[k](val) : plainJson(val)));
+}
+
+const listJson = (/** @type {(x: unknown) => string} */ one) => (/** @type {unknown} */ val) => (Array.isArray(val) ? '[' + val.map(one).join(',') + ']' : plainJson(val));
+const itemJson = (/** @type {unknown} */ it) => knownJson(it, ITEM_KEYS);
+const topicJson = (/** @type {unknown} */ tp) => knownJson(tp, TOPIC_KEYS, { items: listJson(itemJson) });
+const cardJson = (/** @type {unknown} */ c) => knownJson(c, CARD_KEYS, { img: (img) => knownJson(img, IMG_KEYS) });
+
+/** 学习板块的几行（不含最后的逗号）。不是对象时原样写一行。 */
+function studyLines(/** @type {unknown} */ study) {
+  if (!isPlainObject(study)) return ['  "study": ' + plainJson(study)];
+  const st = /** @type {Record<string, unknown>} */ (study);
+  const keys = orderedKeys(st, STUDY_KEYS).filter((k) => !skip(st[k]));
+  if (!keys.length) return ['  "study": {}'];
+  const lines = ['  "study": {'];
+  keys.forEach((k, i) => {
+    const comma = i < keys.length - 1 ? ',' : '';
+    const val = st[k];
+    const one = k === 'topics' ? topicJson : k === 'cards' ? cardJson : null;
+    if (one && Array.isArray(val)) {
+      if (!val.length) { lines.push(`    ${JSON.stringify(k)}: []${comma}`); return; }
+      lines.push(`    ${JSON.stringify(k)}: [`);
+      val.forEach((x, n) => lines.push('      ' + one(x) + (n < val.length - 1 ? ',' : '')));
+      lines.push('    ]' + comma);
+      return;
+    }
+    lines.push(`    ${JSON.stringify(k)}: ${plainJson(val)}${comma}`);
+  });
+  lines.push('  }');
+  return lines;
+}
+
 /**
  * 把 doc 写成固定格式的 journal.json 文本。同一份 doc 写出来逐字节相同。
  * @param {Record<string, any>} journal
@@ -83,6 +125,12 @@ export function formatJournal(journal) {
       lines.push('  "rows": [');
       rows.forEach((row, n) => lines.push('    ' + rowJson(row) + (n < rows.length - 1 ? ',' : '')));
       lines.push('  ]' + comma);
+      return;
+    }
+    if (k === 'study') {
+      const st = studyLines(journal[k]);
+      st[st.length - 1] += comma;
+      lines.push(...st);
       return;
     }
     lines.push('  ' + JSON.stringify(k) + ': ' + plainJson(journal[k]) + comma);

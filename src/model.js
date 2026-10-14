@@ -4,6 +4,7 @@
 import { isIsoDate, todayLocal } from './format.js';
 import { APP_VERSION } from './version.js';
 import { formatJournal, TOP_KEYS, SYSTEM_KEYS, TRADE_KEYS, SHOT_KEYS } from './journal-format.js';
+import { validateStudy, cleanStudy } from './study.js';
 
 export { APP_VERSION, TOP_KEYS, SYSTEM_KEYS, TRADE_KEYS, SHOT_KEYS };
 
@@ -95,7 +96,7 @@ function deepHasBadText(v) {
   return false;
 }
 
-const TEXT_FIELD_LABEL = { name: '系统名称', desc: '系统说明', symbol: '品种', reason: '开仓理由', note: '备注', date: '日期', shots: '截图标签' };
+const TEXT_FIELD_LABEL = { name: '系统名称', desc: '系统说明', symbol: '品种', reason: '开仓理由', note: '备注', date: '日期', shots: '截图标签', study: '学习板块' };
 
 /**
  * 找出第一处存不进去的字符（8.4：22P05、22P02 时指给用户看）。
@@ -316,6 +317,7 @@ export function validateJournal(j) {
       if (shot.addedAt !== undefined && typeof shot.addedAt !== 'string') bad('shots', at + '的添加时间（addedAt）必须是字符串');
     });
   });
+  errors.push(...validateStudy(j.study));
   return errors;
 }
 
@@ -426,6 +428,7 @@ export function normalizeJournal(raw, opts = {}) {
   const errors = validateJournal(copy);
   if (errors.length) throw new ModelError('INVALID', `数据有 ${errors.length} 处问题：${errors[0].message}${errors.length > 1 ? ' 等' : ''}`, errors);
   const cleaned = { ...copy, currency: cleanText(copy.currency), rows: copy.rows.map(cleanRowText) };
+  if (copy.study !== undefined) cleaned.study = cleanStudy(copy.study);
   return ensureFirstSystemRow(cleaned, opts);
 }
 

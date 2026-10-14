@@ -166,6 +166,8 @@ test('第一次登录、本机没数据、云端有：直接拉下来', async ()
   assert.equal(t.store.get().journal.rows.length, sample().rows.length);
   assert.equal(t.sync.state.status, 'synced');
   assert.equal(isBlankJournal({ rows: [{ type: 'system', id: 'sys_1', name: '', desc: '' }] }), true);
+  assert.equal(isBlankJournal({ rows: [{ type: 'system', id: 'sys_1', name: '', desc: '' }], study: { topics: [], cards: [] } }), true);
+  assert.equal(isBlankJournal({ rows: [{ type: 'system', id: 'sys_1', name: '', desc: '' }], study: { topics: [{ id: 'tp_1', name: 'PA', items: [] }], cards: [] } }), false, '学习板块里有东西就不算没数据，不能被云端盖掉');
 });
 
 test('保存响应丢失（其实存上了）：inflight 留着，下次先核对哈希 → 按成功处理，不弹冲突，云端 rev 只加 1', async () => {

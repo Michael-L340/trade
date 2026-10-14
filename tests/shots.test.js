@@ -12,7 +12,7 @@ import { ImageError } from '../src/images.js';
 import { createFakeIndexedDB } from './fakes.js';
 import {
   addShot, deleteShot, setShotLabel, createUrlCache, getShotBlob, defaultLabel, shotPaths, nextLabel,
-  LABELS, LABEL_TEXT, LABEL_MAX, normalizeLabel, ShotError,
+  LABELS, LABEL_TEXT, LABEL_MAX, normalizeLabel, ShotError, addStudyImage, putDemoFiles,
 } from '../src/shots.js';
 
 const sampleText = readFileSync(new URL('../fixtures/sample-journal.json', import.meta.url), 'utf8');
@@ -653,4 +653,63 @@ test('接上真的本机存储（假 IndexedDB 和内存降级）：Blob 带类�
     assert.deepEqual(ids(shotsOf(store, 't_open')), [shot.id], '写不进文件就不加元数据');
     await db.close();
   }
+});
+
+// ---------- 学习卡的图 ----------
+
+test('addStudyImage：写两个文件到 shots/<卡片 id>/，改卡片的 img；换图时旧文件没人引用就删掉', async () => {
+  const { store, db, ctx } = setup();
+  const cid = store.actions.addCard({ title: '双底' });
+  const img = await addStudyImage(ctx, cid, png());
+  assert.match(img.file, new RegExp(`^shots/${cid}/im_[0-9a-f]{12}\\.webp$`));
+  assert.equal(img.thumb, img.file.replace('.webp', '.thumb.webp'));
+  assert.deepEqual({ width: img.width, height: img.height, bytes: img.bytes }, { width: 1920, height: 1080, bytes: 1234 });
+  assert.deepEqual(store.get().journal.study.cards[0].img, img);
+  assert.equal(db.files.get(img.file).uploaded, false);
+  const img2 = await addStudyImage(ctx, cid, png());
+  assert.notEqual(img2.file, img.file);
+  assert.equal(db.files.has(img.file), false, '旧图没人引用：删掉');
+  assert.equal(db.files.has(img.thumb), false);
+  assert.equal(db.files.has(img2.file), true);
+  assert.deepEqual(validateJournal(store.get().journal), []);
+});
+
+test('addStudyImage：卡片不在、只读时拒绝，不留文件；压缩期间卡片被删也不留文件', async () => {
+  const gate = {};
+  const process = fakeProcess({ delay: () => new Promise((r) => { gate.go = r; }) });
+  const { store, db, ctx } = setup({ process });
+  await assert.rejects(addStudyImage(ctx, 'c_nope', png()), ShotError);
+  const cid = store.actions.addCard({});
+  const p = addStudyImage(ctx, cid, png());
+  await new Promise((r) => setTimeout(r, 0));
+  store.actions.deleteCard(cid);
+  gate.go();
+  await assert.rejects(p, /删掉了/);
+  assert.equal(db.files.size, 0);
+  const cid2 = store.actions.addCard({});
+  store.actions.setReadOnly('other-tab');
+  await assert.rejects(addStudyImage(setup().ctx, cid2, png()), ShotError);
+});
+
+test('交易截图被学习卡引用着（收进学习）：删交易里的这张截图时文件留着', async () => {
+  const j = journal();
+  j.rows[1].shots = [{ id: 'sh_1', label: 'open', file: 'shots/t_open/sh_1.webp', thumb: 'shots/t_open/sh_1.thumb.webp' }];
+  const db = fakeDb();
+  db.files.set('shots/t_open/sh_1.webp', { blob: new Blob(['x'], { type: 'image/webp' }), type: 'image/webp', bytes: 1, uploaded: true });
+  db.files.set('shots/t_open/sh_1.thumb.webp', { blob: new Blob(['x'], { type: 'image/webp' }), type: 'image/webp', bytes: 1, uploaded: true });
+  const { store, ctx } = setup({ j, db });
+  store.actions.addCard({ trade: 't_open', img: { file: 'shots/t_open/sh_1.webp', thumb: 'shots/t_open/sh_1.thumb.webp' } });
+  assert.equal(typeof await deleteShot(ctx, 't_open', 'sh_1'), 'function');
+  assert.equal(db.files.has('shots/t_open/sh_1.webp'), true);
+  assert.equal(db.files.has('shots/t_open/sh_1.thumb.webp'), true);
+});
+
+test('putDemoFiles：只在示例模式下把图放进内存', async () => {
+  const { store, ctx } = setup();
+  const blob = new Blob(['x'], { type: 'image/webp' });
+  putDemoFiles(ctx, [['shots/c_demo/im_1.webp', blob]]);
+  assert.equal(await getShotBlob(ctx, 'shots/c_demo/im_1.webp'), null, '不在示例模式：不放');
+  store.actions.replaceJournal(sample(), { demo: true });
+  putDemoFiles(ctx, [['shots/c_demo/im_1.webp', blob]]);
+  assert.equal((await getShotBlob(ctx, 'shots/c_demo/im_1.webp')).size, 1);
 });

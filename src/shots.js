@@ -23,6 +23,7 @@
 import { processImage as defaultProcessImage } from './images.js';
 import { deriveTrade } from './calc.js';
 import { cleanText, isoNow, newId } from './model.js';
+import { cardFiles, studyFiles } from './study.js';
 
 /** 截图标签的三种固定取值（第 5 节）：开仓时、平仓后、不显示。也可以是用户自己打的字（normalizeLabel） */
 export const LABELS = Object.freeze(['open', 'close', '']);
@@ -161,13 +162,20 @@ function takenIds(c) {
   return taken;
 }
 
-/** 数据里所有截图引用着的文件路径 */
+/** 数据里所有截图（交易的截图和学习卡的图）引用着的文件路径 */
 function referencedPaths(c) {
   const used = new Set();
-  for (const row of c.store.get().journal.rows) {
+  const j = c.store.get().journal;
+  for (const row of j.rows) {
     for (const s of shotsOf(row)) for (const p of filePaths(s)) used.add(p);
   }
+  for (const p of studyFiles(j.study)) used.add(p);
   return used;
+}
+
+function findCard(c, id) {
+  const st = c.store.get().journal.study;
+  return st && Array.isArray(st.cards) ? st.cards.find((x) => x.id === id) || null : null;
 }
 
 function filePaths(shot) {
@@ -445,6 +453,69 @@ export function setShotLabel(ctx, tradeId, shotId, text) {
   const next = list.slice();
   next[i] = { ...list[i], label };
   return c.store.actions.updateTrade(tradeId, { shots: next });
+}
+
+// ---------- 学习卡的图 ----------
+
+/**
+ * 给学习卡放一张图（换图也走这里）：压缩 → 写两个文件 shots/<卡片 id>/<图片 id>.webp 和 .thumb.webp →
+ * 改卡片的 img。原来的图如果别处（交易截图、别的卡片）不再引用，就删掉它的本机文件。
+ * 换了图，原来画的批注留着（坐标是按 16:9 画布算的，用户自己决定要不要清掉）。
+ * @returns {Promise<object>} 新的 img
+ *   出错时抛 ShotError、ImageError 或 StorageError（message 可以直接给用户看）；不会留下元数据。
+ */
+export async function addStudyImage(ctx, cardId, blob) {
+  const c = context(ctx);
+  if (!canEdit(c)) throw readOnlyError();
+  if (!findCard(c, cardId)) throw new ShotError('NO_TRADE', '找不到这张学习卡，图没有保存');
+  const demo = isDemo(c);
+  if (!demo) needDb(c);
+
+  const img = await c.process(blob, c.imageOptions);
+  if (!img || !isBlobLike(img.file) || !isBlobLike(img.thumb) || !isSize(img.width) || !isSize(img.height)
+    || !isSize(img.bytes) || !EXTS.has(img.ext)) {
+    throw new ShotError('BAD_IMAGE', '图片压缩的结果不对，没有保存');
+  }
+  const stillOk = () => {
+    if (isDemo(c) !== demo) throw new ShotError('NO_TRADE', '处理图片的时候切换了示例数据，图没有保存');
+    if (!canEdit(c)) throw readOnlyError();
+    if (!findCard(c, cardId)) throw new ShotError('NO_TRADE', '这张学习卡已经删掉了，图没有保存');
+  };
+  stillOk();
+
+  const id = newId('im_');
+  const e = EXTS.get(img.ext);
+  const base = `shots/${cardId}/${id}`;
+  const paths = { file: `${base}.${e}`, thumb: `${base}.thumb.${e}` };
+  const addedAt = isoNow(c.now());
+  const type = typeof img.type === 'string' && img.type ? img.type : img.file.type;
+  await putRecords(c, demo, [
+    [paths.file, { blob: img.file, type: img.file.type || type, bytes: img.file.size, uploaded: false, addedAt }],
+    [paths.thumb, { blob: img.thumb, type: img.thumb.type || type, bytes: img.thumb.size, uploaded: false, addedAt }],
+  ]);
+  try {
+    stillOk();
+    const old = cardFiles(findCard(c, cardId));
+    const next = { file: paths.file, thumb: paths.thumb, width: img.width, height: img.height, bytes: img.bytes };
+    if (!c.store.actions.updateCard(cardId, { img: next })) throw new ShotError('NO_TRADE', '这张学习卡现在改不了，图没有保存');
+    const stillUsed = referencedPaths(c);
+    await removeRecords(c, demo, old.filter((p) => !stillUsed.has(p)));
+    return next;
+  } catch (err) {
+    await removeRecords(c, demo, [paths.file, paths.thumb]);
+    throw err;
+  }
+}
+
+/**
+ * 示例模式用：把几张图（路径 → Blob）放进内存，学习卡的示例图就能显示。不在示例模式时什么都不做。
+ * @param {object} ctx
+ * @param {Array<[string, Blob]>} entries
+ */
+export function putDemoFiles(ctx, entries) {
+  const c = context(ctx);
+  if (!isDemo(c)) return;
+  for (const [path, blob] of entries) c.mem.set(path, { blob, type: blob.type, bytes: blob.size, uploaded: true, addedAt: isoNow(c.now()) });
 }
 
 /**
