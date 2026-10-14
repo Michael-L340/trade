@@ -56,3 +56,11 @@ test('findBadText：指出第几笔哪个字段；deepCleanText 清掉 U+0000 �
   assert.equal(hasBadText('😀'), false, '完整的 emoji 没问题');
   assert.equal(deepCleanText({ a: ['\uD83D'] }).a[0], '�');
 });
+
+test('conflictSummary：学习板块的变化也写进去', () => {
+  const doc = (cards, topics = []) => ({ rows: [], study: { topics, cards } });
+  const base = doc([{ id: 'c_1', title: 'a' }]);
+  const local = doc([{ id: 'c_2', title: 'b' }, { id: 'c_1', title: 'a2' }]);
+  const remote = doc([], [{ id: 'tp_1', name: 'PA', items: [] }]);
+  assert.equal(conflictSummary(base, local, remote).text, '这台电脑：多了 1 张学习卡，改了 1 张学习卡。云端：删了 1 张学习卡，学习目录改了。');
+});

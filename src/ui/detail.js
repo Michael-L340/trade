@@ -11,6 +11,7 @@
 //   - 左栏是截图。传了 opts.shots（main.js 给，怎么传见 sheet.js 的 shotApi）才是真的截图功能：
 //     · 当前选中的那张在 16:9 的区域里完整显示，点它在新标签页打开原图（<a target="_blank">，blob: 地址）；
 //     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 平仓后 / 自己写的字 / 无）。点缩略图换大图；
+//       每张下面还有「收进学习」（opts.toStudy）：用这张截图新建一张学习卡；
 //       点标签在 开仓时 → 平仓后 → 无 之间循环（自己写的再点回到开仓时）；点标签旁边的小笔变成文本框打字
 //       （回车或点别处保存，Esc 不改；清空就是"无"）；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
 //       撤销把文件和记录都放回来；
@@ -168,6 +169,7 @@ export function mountDetail(root, store, opts = {}) {
   const uid = 'tj-detail-' + (++mountCount);
   const shotsApi = shotApi(opts && opts.shots);
   const urls = shotsApi ? shotsApi.urls : null;
+  const toStudy = opts && typeof opts.toStudy === 'function' ? opts.toStudy : null;
 
   // ---------- DOM 只建一次 ----------
   let overlay = root;
@@ -412,7 +414,16 @@ export function mountDetail(root, store, opts = {}) {
     pen.title = PEN_TITLE;
     pen.appendChild(penIcon());
     const del = itemRoot.appendChild(button('thumb-del', '删除'));
-    const item = { id, root: itemRoot, pick, row, lab, pen, del, path: null, held: false, edit: null };
+    // 收进学习：用这张截图新建一张学习卡（main.js 给了 opts.toStudy 才有）
+    const learn = toStudy ? itemRoot.appendChild(button('to-study', '收进学习')) : null;
+    if (learn) {
+      learn.title = '用这张截图新建一张学习卡，去「学习」里画批注、写结论';
+      learn.addEventListener('click', () => {
+        const shot = openId === null ? null : shotOf(openId, id);
+        if (shot) toStudy(openId, shot);
+      });
+    }
+    const item = { id, root: itemRoot, pick, row, lab, pen, del, learn, path: null, held: false, edit: null };
     pick.addEventListener('click', () => selectShot(id));
     lab.addEventListener('click', () => cycleLabel(id));
     pen.addEventListener('click', () => editLabel(item));
@@ -776,6 +787,7 @@ export function mountDetail(root, store, opts = {}) {
       else item.lab.setAttribute('aria-disabled', 'true');
       item.lab.title = can ? LABEL_TITLE : why;
       if (item.pen.hidden !== !can) item.pen.hidden = !can;
+      if (item.learn && item.learn.hidden !== !can) item.learn.hidden = !can;
     }
     if (openId !== null && curShotId === null) showBigText(NO_SHOT_TEXT, can ? NO_SHOT_HELP : '');
   }

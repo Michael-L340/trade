@@ -357,3 +357,44 @@ test('登录失败的报错里不带密码', async (t) => {
     (e) => /登录失败/.test(e.message) && !e.message.includes('wrong-pw-123'),
   );
 });
+
+// ───────── 学习板块（网站 0.4.0 起） ─────────
+
+function studyDoc() {
+  const doc = makeDoc(1, () => [shot('t_1', 1, 10)]);
+  doc.study = {
+    topics: [{ id: 'tp_1', name: '价格行为', items: [{ id: 'kp_1', name: '双底', note: '第二底不破前低' }] }],
+    cards: [
+      { id: 'c_1', item: 'kp_1', title: '自己画的', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: { file: 'shots/c_1/im_1.webp', thumb: 'shots/c_1/im_1.thumb.webp', bytes: 6 }, marks: [], notes: [] },
+      { id: 'c_2', item: 'kp_1', title: '收进来的', kind: 'good', symbol: '', tf: '', source: '', trade: 't_1', take: '', img: { file: 'shots/t_1/sh_1.webp', thumb: 'shots/t_1/sh_1.thumb.webp' }, marks: [], notes: [] },
+      { id: 'c_3', item: '', title: '只有文字', kind: 'bad', symbol: '', tf: '', source: '', trade: null, take: '规则', img: null, marks: [], notes: [] },
+    ],
+  };
+  return doc;
+}
+
+test('学习板块：固定格式和网站一样；学习卡的图一起下载，收进来的卡片引用交易截图不重复下', async (t) => {
+  const { formatJournal: webFormat } = await import('../src/journal-format.js').catch(() => ({}));
+  const doc = studyDoc();
+  if (webFormat) assert.equal(formatJournal(doc), webFormat(doc), '和网站写出来逐字节相同');
+  assert.deepEqual(validateDoc(doc), []);
+  const dir = await tmp(t);
+  const objects = {
+    'shots/t_1/sh_1.webp': Buffer.alloc(10, 1), 'shots/t_1/sh_1.thumb.webp': Buffer.alloc(3, 2),
+    'shots/c_1/im_1.webp': Buffer.alloc(6, 5), 'shots/c_1/im_1.thumb.webp': Buffer.alloc(2, 6),
+  };
+  const f = fakeFetch({ doc, objects });
+  const r = await runBackup({ ...quiet, env: ENV, fetch: f, dir });
+  assert.equal(r.downloaded.length, 4);
+  assert.equal(storageCalls(f).length, 4, '交易截图只下一次');
+  assert.deepEqual(await readFile(join(dir, 'shots/c_1/im_1.webp')), Buffer.alloc(6, 5));
+  assert.deepEqual(r.missing, []);
+});
+
+test('学习板块：图片路径想写到仓库外面、study 结构不对都拒绝', () => {
+  const doc = studyDoc();
+  doc.study.cards[0].img.file = 'shots/../../etc/x';
+  assert.match(validateDoc(doc).join('\n'), /第 1 张学习卡的图片路径/);
+  assert.match(validateDoc({ ...makeDoc(1), study: [] }).join('\n'), /study 必须是对象/);
+  assert.match(validateDoc({ ...makeDoc(1), study: { cards: [{ id: 'x' }] } }).join('\n'), /c_ 开头/);
+});

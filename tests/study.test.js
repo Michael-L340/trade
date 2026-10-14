@@ -208,3 +208,12 @@ test('studyFiles：卡片引用的大图和缩略图，去重', () => {
   ] }), ['shots/c_1/a.webp', 'shots/c_1/a.thumb.webp']);
   assert.deepEqual(studyFiles(undefined), []);
 });
+
+test('示例数据 fixtures/demo-journal.json：交易和附录 A 一样，学习板块合规，示例图都在 fixtures/study/', async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const demo = JSON.parse(readFileSync(new URL('../fixtures/demo-journal.json', import.meta.url), 'utf8'));
+  const sample = JSON.parse(readFileSync(new URL('../fixtures/sample-journal.json', import.meta.url), 'utf8'));
+  assert.deepEqual(demo.rows, sample.rows);
+  assert.deepEqual(validateJournal(demo), []);
+  for (const p of studyFiles(demo.study)) assert.ok(existsSync(new URL('../fixtures/study/' + p.split('/').pop(), import.meta.url)), p);
+});

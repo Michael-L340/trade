@@ -25,6 +25,7 @@ import { mountSummary } from './ui/summary.js';
 import { mountChart } from './ui/chart.js';
 import { mountSheet, readOnlyMessage } from './ui/sheet.js';
 import { mountDetail } from './ui/detail.js';
+import { mountStudy } from './ui/study.js';
 import * as Shots from './shots.js';
 import { downloadText, exportCsv, JSON_MIME, mountSettings } from './ui/settings.js';
 import { showToast } from './ui/toast.js';
@@ -34,8 +35,8 @@ import { createRemote } from './store/remote.js';
 import { createSync } from './store/sync.js';
 import { openConflictDialog } from './ui/conflict.js';
 
-/** 示例数据（交接文档附录 A），相对这个文件定位，部署在子路径下也对 */
-const DEMO_URL = new URL('../fixtures/sample-journal.json', import.meta.url);
+/** 示例数据（交接文档附录 A 的交易 + 学习板块的示例），相对这个文件定位，部署在子路径下也对 */
+const DEMO_URL = new URL('../fixtures/demo-journal.json', import.meta.url);
 const TITLE = '交易日志';
 
 const messageOf = (err) => (err && err.message ? err.message : String(err));
@@ -83,6 +84,9 @@ async function boot() {
     banners: $('banners'),
     pageSheet: $('page-sheet'),
     pageSettings: $('page-settings'),
+    pageStudy: $('page-study'),
+    tabSheet: $('tab-sheet'),
+    tabStudy: $('tab-study'),
     summary: $('summary'),
     chart: $('chart'),
     sheet: $('sheet'),
@@ -185,7 +189,28 @@ async function boot() {
     if (ev.type === 'journal' && (ev.reason === 'demo' || ev.reason === 'exitDemo')) urlCache.releaseAll();
   });
 
-  const detail = mountDetail(els.detail, store, { shots });
+  // 学习板块（学习卡的图和复盘截图放在同一个地方，同一个地址缓存）
+  const study = mountStudy(els.pageStudy, store, {
+    shots: { addStudyImage: (cardId, blob) => Shots.addStudyImage(shotCtx, cardId, blob), urlCache },
+    openTrade(tradeId) {
+      location.hash = '#/';
+      queueMicrotask(() => detail.open(tradeId));
+    },
+  });
+  /** 复盘详情里某张截图「收进学习」：去学习页，用这张截图新建一张学习卡（直接引用这张截图，不另存一份） */
+  function toStudy(tradeId, shot) {
+    const it = store.get().derived.tradeById.get(tradeId);
+    if (!it || !shot) return;
+    detail.close();
+    location.hash = '#/study';
+    const img = { file: shot.file || shot.thumb };
+    if (shot.thumb) img.thumb = shot.thumb;
+    for (const f of ['width', 'height', 'bytes']) if (typeof shot[f] === 'number') img[f] = shot[f];
+    const id = study.newCard({ trade: tradeId, img, symbol: it.t.symbol || '', kind: it.d.outcome === 'loss' ? 'bad' : 'good', source: '自己的交易' });
+    if (id) showToast(`已把第 ${it.no} 笔的截图收进学习，接着画批注、写结论`);
+  }
+
+  const detail = mountDetail(els.detail, store, { shots, toStudy });
   const openDetail = (id) => { detail.open(id); };
   const summary = mountSummary(els.summary, store);
   const chart = mountChart(els.chart, store, { openDetail });
@@ -225,10 +250,28 @@ async function boot() {
     const res = await fetch(DEMO_URL, { cache: 'no-cache' });
     if (!res.ok) throw new Error('示例数据下载失败（HTTP ' + res.status + '）');
     const json = await res.json();
+    const images = await demoImages(json); // 先把示例图下载好，进示例模式后马上放进内存，学习页第一次画就有图
     detail.close();
     store.actions.replaceJournal(json, { demo: true });
+    Shots.putDemoFiles(shotCtx, images);
     focusSheetStart();
     showToast('已载入示例数据：只在这个页面里，随便改都不会保存。点顶上的"退出示例"回到你自己的数据。');
+  }
+
+  /** 示例学习卡的图（fixtures/study/ 下的几张小图）：[路径, Blob]。下载不到的跳过，卡片显示"图片文件不在本机" */
+  async function demoImages(json) {
+    const cards = json && json.study && Array.isArray(json.study.cards) ? json.study.cards : [];
+    const paths = [];
+    for (const c of cards) if (c && c.img) for (const p of [c.img.file, c.img.thumb]) if (p && !paths.includes(p)) paths.push(p);
+    const got = await Promise.all(paths.map(async (p) => {
+      try {
+        const r = await fetch(new URL('../fixtures/study/' + p.split('/').pop(), import.meta.url));
+        return r.ok ? [p, await r.blob()] : null;
+      } catch (err) {
+        return null;
+      }
+    }));
+    return got.filter(Boolean);
   }
 
   function exitDemo() {
@@ -346,6 +389,7 @@ async function boot() {
   function jumpToBadText() {
     const b = sync.state.badText;
     if (!b) { location.hash = '#/settings'; return; }
+    if (b.field === 'study') { location.hash = '#/study'; showToast('学习板块里有存不进去的字符，改掉后会自动重试'); return; }
     if (routeOf(location.hash) !== 'sheet') location.hash = '#/';
     const colMap = { symbol: 'symbol', reason: 'reason', note: 'note', name: 'name', desc: 'desc', date: 'date' };
     const col = colMap[b.field];
@@ -464,15 +508,32 @@ async function boot() {
   let settingsView = null;
   let sheetScrollY = 0;
 
-  const routeOf = (hash) => (String(hash || '').replace(/^#\/?/, '').replace(/\/+$/, '') === 'settings' ? 'settings' : 'sheet');
+  const routeOf = (hash) => {
+    const r = String(hash || '').replace(/^#\/?/, '').replace(/\/+$/, '');
+    return r === 'settings' || r === 'study' ? r : 'sheet';
+  };
 
   function route() {
     const next = routeOf(location.hash);
     if (next === page) return;
     const first = page === null;
     const active = document.activeElement;
-    if (next === 'settings') {
-      if (!first) sheetScrollY = window.scrollY || 0;
+    if (page === 'sheet' && !first) sheetScrollY = window.scrollY || 0;
+    if (page === 'study') study.close();
+    els.pageStudy.hidden = next !== 'study';
+    for (const [tab, name] of [[els.tabSheet, 'sheet'], [els.tabStudy, 'study']]) {
+      if (next === name) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
+    }
+    if (next === 'study') {
+      detail.close();
+      if (settingsView) { settingsView.destroy(); settingsView = null; }
+      els.pageSheet.hidden = true;
+      els.pageSettings.hidden = true;
+      els.openSettings.removeAttribute('aria-current');
+      document.title = '学习 · ' + TITLE;
+      study.open();
+      window.scrollTo(0, 0);
+    } else if (next === 'settings') {
       detail.close();
       els.pageSheet.hidden = true;
       els.pageSettings.hidden = false;
@@ -496,7 +557,7 @@ async function boot() {
       els.openSettings.removeAttribute('aria-current');
       document.title = TITLE;
       if (!first) window.scrollTo(0, sheetScrollY);
-      if (focusWasInSettings) els.openSettings.focus({ preventScroll: true });
+      if (focusWasInSettings && page === 'settings') els.openSettings.focus({ preventScroll: true });
     }
     page = next;
   }
@@ -511,6 +572,7 @@ async function boot() {
     writer,
     sheet,
     detail,
+    study,
     chart,
     shots,
     summary,
@@ -530,6 +592,7 @@ async function boot() {
       if (settingsView) settingsView.destroy();
       link.stop();
       sheet.destroy();
+      study.destroy();
       detail.destroy();
       chart.destroy();
       summary.destroy();

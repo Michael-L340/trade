@@ -5,7 +5,7 @@
 import { formatRow } from './journal-format.js';
 
 /**
- * @typedef {{added: number, changed: number, removed: number, sysAdded: number, sysChanged: number, sysRemoved: number, reordered: boolean}} RowDiff
+ * @typedef {{added: number, changed: number, removed: number, sysAdded: number, sysChanged: number, sysRemoved: number, reordered: boolean, study?: object}} RowDiff
  */
 
 const rowsOf = (doc) => (doc && Array.isArray(doc.rows) ? doc.rows.filter((r) => r && typeof r === 'object' && typeof r.id === 'string') : []);
@@ -35,6 +35,27 @@ export function diffRows(base, other) {
   return out;
 }
 
+/**
+ * 学习板块 base → other 的变化：学习卡多了、改了、删了几张；主题和知识点（含要点）有没有改。
+ * @returns {{cardsAdded: number, cardsChanged: number, cardsRemoved: number, topicsChanged: boolean}}
+ */
+export function diffStudy(base, other) {
+  const cards = (doc) => {
+    const st = doc && doc.study;
+    return new Map((st && Array.isArray(st.cards) ? st.cards : []).filter((c) => c && typeof c.id === 'string').map((c) => [c.id, JSON.stringify(c)]));
+  };
+  const topics = (doc) => JSON.stringify(doc && doc.study && Array.isArray(doc.study.topics) ? doc.study.topics : []);
+  const a = cards(base);
+  const b = cards(other);
+  const out = { cardsAdded: 0, cardsChanged: 0, cardsRemoved: 0, topicsChanged: topics(base) !== topics(other) };
+  for (const [id, text] of b) {
+    if (!a.has(id)) out.cardsAdded += 1;
+    else if (a.get(id) !== text) out.cardsChanged += 1;
+  }
+  for (const id of a.keys()) if (!b.has(id)) out.cardsRemoved += 1;
+  return out;
+}
+
 /** 一段变化写成一句话："多了 2 笔，改了 1 笔"；没变化写"没有改动" */
 export function describeDiff(d) {
   const parts = [];
@@ -45,6 +66,13 @@ export function describeDiff(d) {
   if (d.sysChanged) parts.push(`改了 ${d.sysChanged} 个系统行`);
   if (d.sysRemoved) parts.push(`删了 ${d.sysRemoved} 个系统行`);
   if (d.reordered) parts.push('顺序变了');
+  const s = d.study;
+  if (s) {
+    if (s.cardsAdded) parts.push(`多了 ${s.cardsAdded} 张学习卡`);
+    if (s.cardsChanged) parts.push(`改了 ${s.cardsChanged} 张学习卡`);
+    if (s.cardsRemoved) parts.push(`删了 ${s.cardsRemoved} 张学习卡`);
+    if (s.topicsChanged) parts.push('学习目录改了');
+  }
   return parts.length ? parts.join('，') : '没有改动';
 }
 
@@ -60,8 +88,8 @@ export function conflictSummary(base, local, remote) {
     const r = `${tradeCount(remote)} 笔`;
     return { local: l, remote: r, text: `这台电脑：${l}。云端：${r}。`, localDiff: null, remoteDiff: null };
   }
-  const localDiff = diffRows(base, local);
-  const remoteDiff = diffRows(base, remote);
+  const localDiff = { ...diffRows(base, local), study: diffStudy(base, local) };
+  const remoteDiff = { ...diffRows(base, remote), study: diffStudy(base, remote) };
   const l = describeDiff(localDiff);
   const r = describeDiff(remoteDiff);
   return { local: l, remote: r, text: `这台电脑：${l}。云端：${r}。`, localDiff, remoteDiff };

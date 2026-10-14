@@ -37,10 +37,16 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // ───────── 5.2 固定格式 ─────────
 
-const TOP_KEYS = ['schemaVersion', 'appVersion', 'currency', 'rows'];
+const TOP_KEYS = ['schemaVersion', 'appVersion', 'currency', 'rows', 'study'];
 const SYSTEM_KEYS = ['type', 'id', 'name', 'desc', 'createdAt'];
 const TRADE_KEYS = ['type', 'id', 'date', 'symbol', 'direction', 'rr', 'risk', 'result', 'pnlOverride', 'reason', 'note', 'shots', 'createdAt', 'updatedAt'];
 const SHOT_KEYS = ['id', 'label', 'file', 'thumb', 'width', 'height', 'bytes', 'addedAt'];
+// 学习板块（网站 0.4.0 起）：和网站 src/journal-format.js 写法一致
+const STUDY_KEYS = ['topics', 'cards'];
+const TOPIC_KEYS = ['id', 'name', 'items', 'createdAt'];
+const ITEM_KEYS = ['id', 'name', 'note'];
+const CARD_KEYS = ['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'notes', 'createdAt', 'updatedAt'];
+const IMG_KEYS = ['file', 'thumb', 'width', 'height', 'bytes'];
 
 /** 已知键按固定顺序在前（缺的不补），不认识的键接在后面，保持原来的相对顺序。 */
 function orderedKeys(obj, known) {
@@ -65,6 +71,37 @@ function rowJson(row) {
   ));
 }
 
+function knownJson(v, known, nested = {}) {
+  if (!isObj(v)) return plain(v);
+  return objectJson(v, orderedKeys(v, known), (val, k) => (nested[k] ? nested[k](val) : plain(val)));
+}
+const listJson = (one) => (val) => (Array.isArray(val) ? '[' + val.map(one).join(',') + ']' : plain(val));
+const topicJson = (tp) => knownJson(tp, TOPIC_KEYS, { items: listJson((it) => knownJson(it, ITEM_KEYS)) });
+const cardJson = (c) => knownJson(c, CARD_KEYS, { img: (img) => knownJson(img, IMG_KEYS) });
+
+/** 学习板块：study 的每个键一行（缩进 4），topics、cards 里每个主题、每张卡一行（缩进 6） */
+function studyLines(study) {
+  if (!isObj(study)) return ['  "study": ' + plain(study)];
+  const keys = orderedKeys(study, STUDY_KEYS).filter((k) => study[k] !== undefined);
+  if (!keys.length) return ['  "study": {}'];
+  const lines = ['  "study": {'];
+  keys.forEach((k, i) => {
+    const comma = i < keys.length - 1 ? ',' : '';
+    const v = study[k];
+    const one = k === 'topics' ? topicJson : k === 'cards' ? cardJson : null;
+    if (one && Array.isArray(v)) {
+      if (!v.length) { lines.push(`    ${JSON.stringify(k)}: []${comma}`); return; }
+      lines.push(`    ${JSON.stringify(k)}: [`);
+      v.forEach((x, n) => lines.push('      ' + one(x) + (n < v.length - 1 ? ',' : '')));
+      lines.push('    ]' + comma);
+      return;
+    }
+    lines.push(`    ${JSON.stringify(k)}: ${plain(v)}${comma}`);
+  });
+  lines.push('  }');
+  return lines;
+}
+
 /**
  * journal.json 的固定格式（规格 5.2）：UTF-8 无 BOM、\n 换行、末尾一个换行；
  * 顶层每个键一行（缩进 2）；rows 里每个 row 一行（缩进 4，紧凑 JSON）；键顺序固定。
@@ -81,6 +118,12 @@ export function formatJournal(doc) {
       lines.push('  "rows": [');
       v.forEach((row, n) => lines.push('    ' + rowJson(row) + (n < v.length - 1 ? ',' : '')));
       lines.push('  ]' + comma);
+      return;
+    }
+    if (k === 'study') {
+      const st = studyLines(v);
+      st[st.length - 1] += comma;
+      lines.push(...st);
       return;
     }
     lines.push('  ' + JSON.stringify(k) + ': ' + plain(v) + comma);
@@ -131,6 +174,33 @@ function shotPathOk(p, tradeId) {
   const parts = p.split('/');
   return parts.length === 3 && parts[0] === 'shots' && parts[1] === tradeId
     && FILE_NAME.test(parts[2]) && parts[2] !== '.' && parts[2] !== '..';
+}
+
+/** 学习卡的图：shots/<卡片或交易 id>/<文件名> */
+function studyPathOk(p) {
+  if (typeof p !== 'string') return false;
+  const parts = p.split('/');
+  return parts.length === 3 && parts[0] === 'shots' && ID_PATTERN.test(parts[1])
+    && FILE_NAME.test(parts[2]) && parts[2] !== '.' && parts[2] !== '..';
+}
+
+/** 学习板块（没有 study 键不算错）：只查会让备份出错或写到仓库外面的地方 */
+function validateStudy(study, errs) {
+  if (study === undefined) return;
+  if (!isObj(study)) { errs.push('study 必须是对象'); return; }
+  if (study.topics !== undefined && !Array.isArray(study.topics)) errs.push('study.topics 必须是数组');
+  if (study.cards === undefined) return;
+  if (!Array.isArray(study.cards)) { errs.push('study.cards 必须是数组'); return; }
+  study.cards.forEach((c, i) => {
+    const at = `第 ${i + 1} 张学习卡`;
+    if (!isObj(c)) { errs.push(`${at}不是对象`); return; }
+    if (typeof c.id !== 'string' || !c.id.startsWith('c_') || !ID_PATTERN.test(c.id)) errs.push(`${at}的 id 必须以 c_ 开头`);
+    if (c.img === null || c.img === undefined) return;
+    if (!isObj(c.img)) { errs.push(`${at}的 img 必须是对象或 null`); return; }
+    if (!studyPathOk(c.img.file)) errs.push(`${at}的图片路径必须是 shots/<id>/<文件名>，实际是 ${JSON.stringify(c.img.file)}`);
+    if (c.img.thumb !== undefined && !studyPathOk(c.img.thumb)) errs.push(`${at}的缩略图路径必须是 shots/<id>/<文件名>`);
+    if (c.img.bytes !== undefined && !(Number.isInteger(c.img.bytes) && c.img.bytes >= 0)) errs.push(`${at}的图片 bytes 必须是不小于 0 的整数`);
+  });
 }
 
 /** 返回错误列表，空数组表示通过。 */
@@ -187,6 +257,7 @@ export function validateDoc(doc) {
       }
     });
   });
+  validateStudy(doc.study, errs);
   return errs;
 }
 
@@ -389,6 +460,17 @@ export async function runBackup(o) {
         }
       }
     }
+    // 学习卡的图（从复盘收进来的卡片引用的是交易截图，上面已经排过，不重复下）
+    const cards = isObj(doc.study) && Array.isArray(doc.study.cards) ? doc.study.cards : [];
+    for (const card of cards) {
+      if (!isObj(card) || !isObj(card.img)) continue;
+      for (const [path, bytes] of [[card.img.file, card.img.bytes], [card.img.thumb, undefined]]) {
+        if (path === undefined || queued.has(path)) continue;
+        queued.add(path);
+        if (tracked.has(path) || existsSync(join(dir, path))) continue;
+        jobs.push({ trade: 0, tradeId: card.id, file: path, bytes });
+      }
+    }
     const downloaded = [];
     const missing = [];
     const one = async (job) => {
@@ -431,7 +513,7 @@ export async function runBackup(o) {
     await writeFile(statePath, JSON.stringify(next, null, 2) + '\n', 'utf8');
 
     log(`rev ${rev}，交易 ${trades} 笔，截图 ${shots} 张；本次新下载 ${downloaded.length} 个文件，缺 ${missing.length} 个`);
-    for (const m of missing) log(`  缺图：第 ${m.trade} 笔（${m.tradeId}）${m.file}：${m.reason}`);
+    for (const m of missing) log(`  缺图：${m.trade ? `第 ${m.trade} 笔` : '学习卡'}（${m.tradeId}）${m.file}：${m.reason}`);
     return { rev, trades, shots, downloaded, missing };
   } finally {
     await logout(c, sess, fetchFn, log);
@@ -466,7 +548,7 @@ export async function runReport(o) {
   log(`备份状态已写入：${JSON.stringify(tjBackup)}`);
   if (state.missing.length) {
     log(`有 ${state.missing.length} 个截图文件没备份到（journal.json 和拿到的图已经提交）：`);
-    for (const m of state.missing) log(`  第 ${m.trade} 笔（${m.tradeId}）${m.file}：${m.reason}`);
+    for (const m of state.missing) log(`  ${m.trade ? `第 ${m.trade} 笔` : '学习卡'}（${m.tradeId}）${m.file}：${m.reason}`);
   }
   return state.missing.length;
 }

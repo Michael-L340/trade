@@ -118,6 +118,7 @@ export function findBadText(journal) {
       }
     }
   }
+  if (journal && deepHasBadText(journal.study)) return { rowIndex: -1, id: '', tradeNo: null, field: 'study', label: TEXT_FIELD_LABEL.study };
   return null;
 }
 

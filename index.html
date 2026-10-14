@@ -19,6 +19,10 @@
   <div class="topbar-inner">
     <div class="topbar-left">
       <h1 class="brand">交易日志</h1>
+      <nav class="tabs" aria-label="板块">
+        <a class="tab" id="tab-sheet" href="#/">复盘</a>
+        <a class="tab" id="tab-study" href="#/study">学习</a>
+      </nav>
       <span class="tag-demo" id="demo-tag" hidden>示例数据</span>
       <button type="button" class="btn link" id="demo-exit" hidden>退出示例</button>
     </div>
@@ -43,6 +47,8 @@
     <noscript><p class="loading">这个网站需要开启 JavaScript 才能使用。</p></noscript>
   </section>
 </main>
+
+<main class="page study-main" id="page-study" aria-label="学习" hidden></main>
 
 <main class="page" id="page-settings" aria-label="设置" hidden></main>
 
