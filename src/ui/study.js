@@ -860,12 +860,17 @@ export function mountStudy(root, store, opts = {}) {
     fileInput.accept = 'image/*';
     fileInput.hidden = true;
     fileInput.addEventListener('change', () => {
-      const f = fileInput.files && fileInput.files[0];
+      const files = Array.from(fileInput.files || []);
       fileInput.value = '';
-      if (f) putImage(f, local.target);
+      if (!files.length) return;
+      if (local.target === 'new') putImages(files);
+      else putImage(files[0], local.target);
     });
-    /** 选图片：page 是 'new' 时加在最后，是数字时换掉那一张 */
-    const pickImage = (page) => { local.target = page; fileInput.click(); };
+    /** 选图片：page 是 'new' 时加在最后（可以多选），是数字时换掉那一张 */
+    const pickImage = (page) => { local.target = page; fileInput.multiple = page === 'new'; fileInput.click(); };
+    /** 几张图一张一张加在最后（粘贴、拖进来、多选文件） */
+    let queue = Promise.resolve();
+    const putImages = (blobs) => { for (const b of blobs) queue = queue.then(() => putImage(b, 'new')); return queue; };
 
     async function putImage(blob, page = 'new') {
       if (!editable()) { readOnlyHint(); return; }
@@ -1472,12 +1477,12 @@ export function mountStudy(root, store, opts = {}) {
       if (!info.images.length) return;
       if (isTyping(e.target) && info.hasText) return;
       e.preventDefault();
-      putImage(info.images[0], 'new'); // 已经有图就加成下一张
+      putImages(info.images); // 和复盘一样：Ctrl+V 直接加在最后（还没有图就是第一张）
     }
     function onDrop(e) {
       e.preventDefault();
       const info = readTransfer(e.dataTransfer);
-      if (info.images.length) putImage(info.images[0], 'new');
+      if (info.images.length) putImages(info.images);
     }
     const onDragOver = (e) => { if (Array.from(e.dataTransfer ? e.dataTransfer.types : []).includes('Files')) e.preventDefault(); };
     let downOnWrap = false;

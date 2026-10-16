@@ -192,7 +192,7 @@ async function boot() {
 
   // 学习板块（学习卡的图和复盘截图放在同一个地方，同一个地址缓存）
   const study = mountStudy(els.pageStudy, store, {
-    shots: { addStudyImage: (cardId, blob) => Shots.addStudyImage(shotCtx, cardId, blob), urlCache },
+    shots: { addStudyImage: (cardId, blob, o) => Shots.addStudyImage(shotCtx, cardId, blob, o), urlCache },
     openTrade(tradeId) {
       location.hash = '#/';
       queueMicrotask(() => detail.open(tradeId));
