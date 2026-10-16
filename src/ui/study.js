@@ -625,7 +625,7 @@ export function mountStudy(root, store, opts = {}) {
     if (k >= pages.length) k = 0;
     const extra = [cmp];
     if (pages.length > 1) {
-      extra.push(el('span', 'st-cap', pageName(pages[k], k)));
+      if (pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 没起标签就不写「第 n 张」
       extra.push(el('span', 'st-count', `${k + 1}/${pages.length}`));
     }
     art.appendChild(shotBox(card, { full: big, extra, page: k }));
@@ -637,7 +637,7 @@ export function mountStudy(root, store, opts = {}) {
         const b = button('st-strip-btn', null, `看${pageName(p, i)}`);
         b.setAttribute('aria-pressed', String(i === k));
         b.appendChild(shotBox(card, { page: i }));
-        b.appendChild(el('span', null, pageName(p, i)));
+        if (p.img.label) b.appendChild(el('span', null, p.img.label));
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           view.shown.set(card.id, i);
@@ -999,23 +999,94 @@ export function mountStudy(root, store, opts = {}) {
       paint(j < i ? '#st-pg-left' : '#st-pg-right');
     }
 
-    async function removePage(i) {
+    /** 删掉第 i 张图（连同它上面的批注和编号说明）。和复盘删截图一样：马上删，10 秒内可以撤销 */
+    function removePage(i) {
+      if (!editable()) { readOnlyHint(); return; }
       const c = card();
       if (!c) return;
       const pages = cardPages(c);
-      const ok = await confirmDialog({ title: `从这张卡里拿掉${pageName(pages[i], i)}？`, message: '这张图上的批注和编号说明会一起去掉。', confirmText: '拿掉', danger: true, initialFocus: 'cancel' });
-      if (!ok) return;
-      const cur = card();
-      if (!cur) return;
-      const now = cardPages(cur);
-      if (now[i] && now[i].img.file === pages[i].img.file) {
-        now.splice(i, 1);
-        local.selected = -1;
-        local.undo = [];
-        savePages(now);
-        if (local.page >= now.length) local.page = Math.max(0, now.length - 1);
-      }
+      if (!pages[i]) return;
+      const before = { ...pagesPatch(pages), notes: c.notes };
+      const name = pageName(pages[i], i);
+      pages.splice(i, 1);
+      local.selected = -1;
+      local.undo = [];
+      if (!savePages(pages)) return;
+      if (local.page > i || local.page >= pages.length) local.page = Math.max(0, local.page - 1);
       paint();
+      showToast(`已删除${name}`, {
+        undo: () => {
+          if (!store.actions.updateCard(cardId, before)) return false;
+          local.page = i;
+          local.selected = -1;
+          if (editor && editor.id === cardId) paint();
+          return true;
+        },
+      });
+    }
+
+    /** 把第 from 张挪到第 to 个位置（拖缩略图） */
+    function movePageTo(from, to) {
+      const c = card();
+      if (!c || from === to) return;
+      const pages = cardPages(c);
+      if (!pages[from] || to < 0 || to >= pages.length) return;
+      const [p] = pages.splice(from, 1);
+      pages.splice(to, 0, p);
+      local.page = to;
+      local.selected = -1;
+      local.undo = [];
+      savePages(pages);
+      paint('#st-pg-' + to);
+    }
+
+    /** 缩略图按住拖到别的位置换顺序；只是点一下就切过去编辑那张 */
+    function bindReorder(tabs, item, tab, i, count) {
+      let d = null;
+      tab.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || count < 2 || !editable()) return;
+        d = { x0: e.clientX, y0: e.clientY, on: false, to: i, id: e.pointerId };
+      });
+      tab.addEventListener('pointermove', (e) => {
+        if (!d || e.pointerId !== d.id) return;
+        if (!d.on) {
+          if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+          d.on = true;
+          try { tab.setPointerCapture(e.pointerId); } catch { /* 没有也能拖 */ }
+          item.classList.add('dragging');
+        }
+        item.style.transform = `translate(${e.clientX - d.x0}px, ${e.clientY - d.y0}px)`;
+        // 落在哪张缩略图上：鼠标在它左半边就插到它前面，右半边插到它后面
+        const items = Array.from(tabs.querySelectorAll('.st-page-item'));
+        let best = null;
+        for (const it of items) {
+          if (it === item) continue;
+          const r = it.getBoundingClientRect();
+          const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+          if (!best || dist < best.dist) best = { it, r, dist };
+        }
+        for (const it of items) it.classList.remove('ins-before', 'ins-after');
+        if (!best) return;
+        const k = Number(best.it.dataset.i);
+        const after = e.clientX > best.r.left + best.r.width / 2;
+        best.it.classList.add(after ? 'ins-after' : 'ins-before');
+        let to = after ? k + 1 : k;
+        if (to > i) to -= 1;
+        d.to = to;
+      });
+      const end = (e) => {
+        if (!d || (e && e.pointerId !== d.id)) return;
+        const done = d;
+        d = null;
+        if (!done.on) return;
+        item.classList.remove('dragging');
+        item.style.removeProperty('transform');
+        for (const it of tabs.querySelectorAll('.st-page-item')) it.classList.remove('ins-before', 'ins-after');
+        tab.dataset.dragged = '1'; // 松手后浏览器还会补一个 click，别让它当成"切过去"
+        movePageTo(i, done.to);
+      };
+      tab.addEventListener('pointerup', end);
+      tab.addEventListener('pointercancel', end);
     }
 
     // ---------- 画编辑框 ----------
@@ -1101,13 +1172,26 @@ export function mountStudy(root, store, opts = {}) {
         tabs.setAttribute('role', 'group');
         tabs.setAttribute('aria-label', '这张卡里的图');
         pages.forEach((p, i) => {
+          const item = el('div', 'st-page-item');
+          item.dataset.i = String(i);
           const b = button('st-page-tab', null, `编辑${pageName(p, i)}`);
           b.id = 'st-pg-' + i;
           b.setAttribute('aria-pressed', String(i === cur));
+          if (editable() && pages.length > 1) b.title = '点一下编辑这张；按住拖动换顺序';
           b.appendChild(shotBox(c, { page: i }));
           b.appendChild(el('span', null, pageName(p, i)));
-          b.addEventListener('click', () => { local.page = i; local.selected = -1; local.undo = []; paint('#st-pg-' + i); });
-          tabs.appendChild(b);
+          b.addEventListener('click', () => {
+            if (b.dataset.dragged) { delete b.dataset.dragged; return; }
+            local.page = i; local.selected = -1; local.undo = []; paint('#st-pg-' + i);
+          });
+          item.appendChild(b);
+          if (editable()) {
+            const del = button('st-page-del', '删除', `删除${pageName(p, i)}`);
+            del.addEventListener('click', () => removePage(i));
+            item.appendChild(del);
+            bindReorder(tabs, item, b, i, pages.length);
+          }
+          tabs.appendChild(item);
         });
         if (editable() && pages.length < MAX_PAGES) {
           const add = button('st-page-add', local.busy ? '处理中…' : '＋ 加图');
@@ -1157,10 +1241,6 @@ export function mountStudy(root, store, opts = {}) {
         undo.disabled = !local.undo.length;
         undo.addEventListener('click', undoMarks);
         tools.appendChild(undo);
-        const swap = button('st-tool', local.busy ? '处理中…' : pages.length > 1 ? '换这张图' : '换图');
-        swap.disabled = local.busy;
-        swap.addEventListener('click', () => pickImage(cur));
-        tools.appendChild(swap);
         left.appendChild(tools);
       }
       const stage = shotBox(c, { full: true, selected: local.selected, page: cur, edit: editable() });
@@ -1190,8 +1270,8 @@ export function mountStudy(root, store, opts = {}) {
           }
         }, { placeholder: '比如：开仓时、持仓中、平仓后' });
         row.appendChild(field('这张图的标签', lab));
+        const moves = el('div', 'st-page-moves');
         if (pages.length > 1) {
-          const moves = el('div', 'st-page-moves');
           const lb = button('btn', '← 往前');
           lb.id = 'st-pg-left';
           lb.disabled = cur === 0;
@@ -1200,11 +1280,15 @@ export function mountStudy(root, store, opts = {}) {
           rb.id = 'st-pg-right';
           rb.disabled = cur === pages.length - 1;
           rb.addEventListener('click', () => movePage(cur, cur + 1));
-          const rm = button('btn', '从卡里拿掉这张');
-          rm.addEventListener('click', () => removePage(cur));
-          moves.append(lb, rb, rm);
-          row.appendChild(moves);
+          moves.append(lb, rb);
         }
+        const rp = button('btn', local.busy ? '处理中…' : '换这张图');
+        rp.disabled = local.busy;
+        rp.addEventListener('click', () => pickImage(cur));
+        const rm = button('btn', '删除这张图');
+        rm.addEventListener('click', () => removePage(cur));
+        moves.append(rp, rm);
+        row.appendChild(moves);
         left.appendChild(row);
       } else if (pages[cur].img.label) left.appendChild(el('p', 'st-hint', '这张图：' + pages[cur].img.label));
       return left;
