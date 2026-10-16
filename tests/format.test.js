@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  MINUS, DASH, signOf, fmtR, fmtTwo, fmtPct, fmtCi, fmtMoney, fmtRR, fmtDirection, OUTCOME_LABEL, SHOT_LABEL,
+  MINUS, DASH, signOf, fmtR, fmtTwo, fmtPct, fmtCi, fmtWinRange, fmtMoney, fmtRR, fmtDirection, OUTCOME_LABEL, SHOT_LABEL,
   parseNumber, parseDate, isIsoDate, todayLocal,
 } from '../src/format.js';
 import { deriveJournal, sampleHint } from '../src/calc.js';
@@ -184,6 +184,10 @@ test('附录 B：界面上的显示文字', () => {
   assert.equal(`${all.n} 笔已平仓，${all.open} 笔持仓中`, '15 笔已平仓，1 笔持仓中');
   assert.equal(fmtPct(all.winRate), '40%');
   assert.equal(`${all.wins} 胜 ${all.losses} 负，误差 ${fmtCi(all.ciHalfWidth)}`, '6 胜 9 负，误差 ±25%');
+  assert.equal(fmtWinRange(all.winRate, all.ciHalfWidth), '15%～65%', '40% ± 25%');
+  assert.equal(fmtWinRange(0.4, 43), '0%～83%', '下限不低于 0%');
+  assert.equal(fmtWinRange(0.9, 20), '70%～100%', '上限不高于 100%');
+  assert.equal(fmtWinRange(0.4, null), '', '没有误差时不显示');
   assert.equal(fmtTwo(all.payoff), '2.00');
   assert.equal(`平均赚 ${fmtMoney(all.avgWinMoney, { currency: cur })}，亏 ${fmtMoney(all.avgLossMoney, { currency: cur })}`, '平均赚 $200，亏 $100');
   assert.equal(fmtR(all.expectancy, 2), '+0.20R');

@@ -10,7 +10,7 @@
 //
 // summaryTexts(derived, currency) 是纯函数：只算要显示的文字，不碰 DOM，方便测试。
 
-import { fmtPct, fmtCi, fmtTwo, fmtR, fmtMoney } from '../format.js';
+import { fmtPct, fmtWinRange, fmtTwo, fmtR, fmtMoney } from '../format.js';
 
 /** 第一排：标题、大数字的键、小字的键 */
 const ROW1 = [
@@ -32,7 +32,7 @@ const ROW2 = [
  * 顶部统计要显示的全部文字（7.9；附录 B 的"全部"一列）。
  * - 副标题：15 笔已平仓，1 笔持仓中 · 2026-09-01 至今（日期取表格里第一笔交易的日期）。
  *   有"已选结果但缺数、不进统计"的交易时，加一句"，n 笔缺数"，免得笔数对不上。
- * - 胜率下面：6 胜 9 负，误差 ±25%（胜 + 负 < 5 不显示误差；有打平的交易时加"n 平"，平不算进胜率）。
+ * - 胜率下面：6 胜 9 负，真实胜率大概在 15%～65%（胜率 ± 误差；胜 + 负 < 5 不显示；有打平的交易时加"n 平"，平不算进胜率）。
  * - 实际盈亏比下面：平均赚 $200，亏 $100。期望值下面：每笔平均 +$20。累计下面：金额 +$300。
  * - 没法算的数显示"—"。
  * @param {{all: object, grouped: {trades: Array}}} derived store.get().derived
@@ -57,8 +57,8 @@ export function summaryTexts(derived, currency = '') {
   if (n) {
     const flat = n - s.wins - s.losses;
     winRateFoot = s.wins + ' 胜 ' + s.losses + ' 负' + (flat ? ' ' + flat + ' 平' : '');
-    const ci = fmtCi(s.ciHalfWidth);
-    if (ci) winRateFoot += '，误差 ' + ci;
+    const range = fmtWinRange(s.winRate, s.ciHalfWidth);
+    if (range) winRateFoot += '，真实胜率大概在 ' + range;
   }
 
   let payoffFoot = '';

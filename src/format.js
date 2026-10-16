@@ -72,6 +72,14 @@ export function fmtCi(ci) {
   return '±' + scaledRound(Math.abs(ci), 0) + '%';
 }
 
+/** 真实胜率大概在哪个范围：胜率 ± 误差，截在 0%–100% 之间（17%～69%）。p 是 0–1 的比例，ci 是百分点。没有时返回空串。 */
+export function fmtWinRange(p, ci) {
+  if (!isNum(p) || !isNum(ci)) return '';
+  const lo = Math.max(0, p * 100 - Math.abs(ci));
+  const hi = Math.min(100, p * 100 + Math.abs(ci));
+  return scaledRound(lo, 0) + '%～' + scaledRound(hi, 0) + '%';
+}
+
 /**
  * 金额：千分位，整数不带小数，否则两位小数（+300、−1,250.50）。
  * @param {object} [opts]
