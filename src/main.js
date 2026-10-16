@@ -214,7 +214,8 @@ async function boot() {
   const openDetail = (id) => { detail.open(id); };
   const summary = mountSummary(els.summary, store);
   const chart = mountChart(els.chart, store, { openDetail });
-  const sheet = mountSheet(els.sheet, store, { openDetail, onLoadDemo: loadDemo, shots });
+  const colWidths = { load: () => db.loadMeta('colWidths'), save: (w) => db.saveMeta('colWidths', w) }; // 列宽每台设备各记各的
+  const sheet = mountSheet(els.sheet, store, { openDetail, onLoadDemo: loadDemo, shots, colWidths });
 
   link = connectStore(store, db, {
     writer,

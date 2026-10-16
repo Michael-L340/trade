@@ -26,21 +26,49 @@ import { confirmDialog, showToast } from './toast.js';
 // 纯函数
 // ====================================================================
 
-/** 表格的列（7.2），顺序就是显示顺序。key 写在格子的 data-col 上。 */
+/** 表格的列（7.2），顺序就是显示顺序。key 写在格子的 data-col 上。width 是默认列宽，开仓理由不定宽、占剩下的 */
 export const COLUMNS = Object.freeze([
-  { key: 'no', label: '#', width: 48, align: 'c' },
-  { key: 'date', label: '日期', width: 104 },
-  { key: 'symbol', label: '品种', width: 84 },
-  { key: 'direction', label: '方向', width: 56, align: 'c' },
-  { key: 'rr', label: '盈亏比', width: 72, align: 'c' },
-  { key: 'risk', label: '止损', width: 80, align: 'c', money: true },
-  { key: 'tp', label: '止盈', width: 108, align: 'c', money: true, auto: true },
-  { key: 'result', label: '结果', width: 84, align: 'c' },
-  { key: 'pnl', label: '盈亏', width: 156, align: 'c', money: true, auto: true },
+  { key: 'no', label: '#', width: 44, align: 'c' },
+  { key: 'date', label: '日期', width: 100, align: 'c' },
+  { key: 'symbol', label: '品种', width: 80, align: 'c' },
+  { key: 'direction', label: '方向', width: 58, align: 'c' },
+  { key: 'rr', label: '盈亏比', width: 70, align: 'c' },
+  { key: 'risk', label: '止损', width: 94, align: 'c', money: true },
+  { key: 'tp', label: '止盈', width: 85, align: 'c', money: true, auto: true },
+  { key: 'result', label: '结果', width: 94, align: 'c' },
+  { key: 'pnl', label: '盈亏', width: 122, align: 'c', money: true, auto: true },
   { key: 'reason', label: '开仓理由', width: null },
-  { key: 'shots', label: '截图', width: 112, align: 'c' },
-  { key: 'note', label: '备注', width: 220 },
+  { key: 'shots', label: '截图', width: 120, align: 'c' },
+  { key: 'note', label: '备注', width: 250 },
 ].map(Object.freeze));
+
+/** 拖表头改列宽时每列最窄、最宽多少像素；开仓理由至少留多宽（表格最小宽度 = 其他列加起来 + 这个） */
+export const COL_MIN = 32;
+export const COL_MAX = 600;
+export const REASON_MIN = 120;
+
+/**
+ * 存在本机的列宽 → 只留认得的列（开仓理由不能定宽）、COL_MIN–COL_MAX 之间的整数、和默认值不一样的。
+ * 其他一律丢掉，所以读回来的东西坏了也只是回到默认。
+ * @returns {Record<string, number>} 改过的列 → 宽度
+ */
+export function cleanWidths(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const c of COLUMNS) {
+    const v = raw[c.key];
+    if (!c.width || typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const w = Math.round(v);
+    if (w >= COL_MIN && w <= COL_MAX && w !== c.width) out[c.key] = w;
+  }
+  return out;
+}
+
+/** 拖某条竖线改的是哪一列：竖线左边那一列；开仓理由占剩下的宽度，拖它右边的线改的是截图列（往左拖截图变宽） */
+export function resizeTarget(key) {
+  if (key === 'reason') return { key: 'shots', sign: -1 };
+  return { key, sign: 1 };
+}
 
 const COL_ORDER = COLUMNS.map((c) => c.key);
 
@@ -563,6 +591,8 @@ export function errorText(err) {
  * @param {(id: string) => void} [opts.openDetail] 点行号或截图格时打开单笔详情（选中行由详情自己 select）
  * @param {() => (void|Promise)} [opts.onLoadDemo] "看看示例数据"按钮的回调；不传就不显示这个按钮。
  *   默认在没有交易、也不在示例模式时显示；main 可以用返回值的 setDemoButton(true/false/null) 自己决定。
+ * @param {{load: () => Promise<any>, save: (widths: object) => Promise<any>}} [opts.colWidths] 拖表头改的列宽存哪
+ *   （main.js 给本机 meta 存储，每台设备各记各的）。不传就只在这次打开时有效。
  * @param {object} [opts.shots] 截图功能（main.js 传入）：{ addShot, deleteShot, setShotLabel, urlCache, defaultLabel }，
  *   怎么传见 shotApi。不传时截图格是占位：灰框加"n 张"，粘贴图片只提示一句。
  * @returns {{focusCell: (id: string, col: string) => boolean, rebuild: () => void,
@@ -616,19 +646,21 @@ export function mountSheet(container, store, opts = {}) {
   const table = h('table', 'sheet');
   const caption = h('caption', 'sr-only', '交易表：一行一笔交易，深色的行是交易系统的分隔行');
   const colgroup = h('colgroup');
-  for (const c of COLUMNS) colgroup.appendChild(h('col', c.width ? 'w' + c.width : null));
+  const colEls = new Map();
+  for (const c of COLUMNS) colEls.set(c.key, colgroup.appendChild(h('col')));
   const thead = h('thead');
   const headRow = h('tr');
   const headLabels = new Map();
-  for (const c of COLUMNS) {
+  COLUMNS.forEach((c, i) => {
     const th = h('th', c.align || null);
     th.setAttribute('scope', 'col');
     const label = h('span', null, '');
     th.appendChild(label);
     if (c.auto) th.appendChild(h('span', 'auto-tag', '自动'));
+    if (i < COLUMNS.length - 1) th.appendChild(resizeHandle(c.key));
     headRow.appendChild(th);
     headLabels.set(c.key, label);
-  }
+  });
   thead.appendChild(headRow);
   const tbody = h('tbody');
   table.append(caption, colgroup, thead, tbody);
@@ -637,10 +669,82 @@ export function mountSheet(container, store, opts = {}) {
   const addBtn = button('btn', '＋ 新建一个系统');
   const demoBtn = button('btn', '看看示例数据');
   demoBtn.hidden = true;
+  const resetColsBtn = button('btn', '恢复默认列宽');
+  resetColsBtn.hidden = true;
   const hint = h('span', 'footer-hint');
   hint.setAttribute('role', 'status');
-  footer.append(addBtn, demoBtn, hint);
+  footer.append(addBtn, demoBtn, resetColsBtn, hint);
   container.append(scroll, footer);
+
+  // ---------- 列宽：拖表头之间的竖线改，双击竖线或点「恢复默认列宽」还原 ----------
+  const colStore = opts.colWidths && typeof opts.colWidths.load === 'function' && typeof opts.colWidths.save === 'function' ? opts.colWidths : null;
+  let widths = {};
+  const widthOf = (key) => widths[key] || (COLUMNS.find((c) => c.key === key) || {}).width || null;
+  function applyWidths() {
+    let sum = 0;
+    for (const c of COLUMNS) {
+      const w = c.width ? widthOf(c.key) : null;
+      const col = colEls.get(c.key);
+      if (w) { col.style.width = w + 'px'; sum += w; } else col.style.removeProperty('width');
+    }
+    table.style.minWidth = sum + REASON_MIN + 'px';
+    setHidden(resetColsBtn, !Object.keys(widths).length);
+  }
+  function saveWidths() {
+    if (colStore) Promise.resolve().then(() => colStore.save({ ...widths })).catch(() => {}); // 只读的标签页存不进去，这次照样生效
+  }
+  function setWidth(key, w) {
+    const next = cleanWidths({ ...widths, [key]: w });
+    if (!(key in next)) delete widths[key];
+    widths = next;
+    applyWidths();
+  }
+  function resizeHandle(key) {
+    const rs = h('span', 'col-rs');
+    rs.setAttribute('aria-hidden', 'true');
+    rs.title = '拖动改列宽，双击恢复这一列';
+    listen(rs, 'pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const { key: target, sign } = resizeTarget(key);
+      const x0 = e.clientX;
+      const w0 = widthOf(target);
+      try { rs.setPointerCapture(e.pointerId); } catch { /* 没有也能拖 */ }
+      rs.classList.add('on');
+      doc.body.classList.add('col-resizing');
+      const move = (ev) => setWidth(target, Math.max(COL_MIN, Math.min(COL_MAX, Math.round(w0 + sign * (ev.clientX - x0)))));
+      const up = () => {
+        rs.classList.remove('on');
+        doc.body.classList.remove('col-resizing');
+        rs.removeEventListener('pointermove', move);
+        rs.removeEventListener('pointerup', up);
+        rs.removeEventListener('pointercancel', up);
+        saveWidths();
+      };
+      rs.addEventListener('pointermove', move);
+      rs.addEventListener('pointerup', up);
+      rs.addEventListener('pointercancel', up);
+    });
+    listen(rs, 'dblclick', (e) => {
+      e.preventDefault();
+      setWidth(resizeTarget(key).key, null);
+      saveWidths();
+    });
+    return rs;
+  }
+  listen(resetColsBtn, 'click', () => {
+    widths = {};
+    applyWidths();
+    saveWidths();
+  });
+  applyWidths();
+  if (colStore) {
+    Promise.resolve().then(() => colStore.load()).then((raw) => {
+      if (ac.signal.aborted) return;
+      widths = cleanWidths(raw);
+      applyWidths();
+    }).catch(() => {});
+  }
   // 品种的候选项（用过的品种，按近 30 天使用次数排序，所有系统通用）。点品种格就弹出全部候选；打字时按打的字筛。
   // 不用浏览器自带的 datalist：它只列和格子里现有文字对得上的，新一笔已经填了品种时就看不到别的。
   let symbolOpts = [];
@@ -1007,7 +1111,8 @@ export function mountSheet(container, store, opts = {}) {
       c.countEl = h('span', 'shot-count');
       c.btn.append(c.slot, c.countEl);
     }
-    setText(c.countEl, count + ' 张');
+    setText(c.countEl, String(count)); // 缩略图右下角的小角标；只有 1 张时不显示（CSS）
+    setClass(c.countEl, 'one', count === 1);
     c.btn.setAttribute('aria-label', `第 ${no} 笔的 ${count} 张截图：打开详情`);
     c.btn.removeAttribute('title');
     if (c.thumbPath !== path) {

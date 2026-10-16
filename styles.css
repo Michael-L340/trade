@@ -112,9 +112,12 @@ h1, h2, p { margin: 0; }
 .sheet-wrap { background: var(--surface); border: 1px solid var(--line-2); min-width: 0; }
 .sheet-scroll { min-width: 0; }
 @media (max-width: 1240px) { .sheet-scroll { overflow-x: auto; } }
-.sheet { width: 100%; min-width: 1180px; border-collapse: collapse; table-layout: fixed; font-size: 14px; line-height: 1.4; color: var(--ink); }
-.sheet col.w48 { width: 48px; } .sheet col.w56 { width: 56px; } .sheet col.w72 { width: 72px; } .sheet col.w80 { width: 80px; }
-.sheet col.w84 { width: 84px; } .sheet col.w104 { width: 104px; } .sheet col.w108 { width: 108px; } .sheet col.w112 { width: 112px; } .sheet col.w220 { width: 220px; }
+.sheet { width: 100%; min-width: 1237px; border-collapse: collapse; table-layout: fixed; font-size: 14px; line-height: 1.4; color: var(--ink); }
+/* 列宽由 sheet.js 写在 <col> 上（默认值在 COLUMNS 里，拖表头改过的存本机）；表格最小宽度也由它算 */
+/* 拖表头之间的竖线改列宽：竖线在每个表头格的右边，鼠标放上去变蓝 */
+.col-rs { position: absolute; top: 0; right: -1px; width: 9px; height: 100%; cursor: col-resize; z-index: 3; touch-action: none; }
+.col-rs:hover, .col-rs.on { background: var(--accent); opacity: .45; }
+body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none; }
 .sheet th { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; height: 40px; padding: 0 10px; background: var(--head); color: var(--ink-2); font-size: 13px; font-weight: 500; text-align: left; border-bottom: 1px solid var(--line-2); border-right: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sheet th.r { text-align: right; }
 .sheet th.c { text-align: center; }
@@ -384,12 +387,14 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
    四、截图（7.2、7.7、7.8）
    ==================================================================== */
 
-/* 表格的截图格：第一张的缩略图（60×34，滚动到看得见时才读）加"n 张"；没图是预览稿的虚线框"贴图"（.shot-empty） */
+/* 表格的截图格：第一张的缩略图（60×34，滚动到看得见时才读）居中，右下角一个小数字是张数（1 张不显示）；没图是虚线框"贴图"（.shot-empty） */
 .thumb-slot { display: block; flex: none; width: 60px; height: 34px; overflow: hidden; border: 1px solid var(--line-2); background: var(--head); }
 .thumb-slot img { display: block; width: 100%; height: 100%; object-fit: cover; }
 /* 文件不在本机、图片打不开：小框里写两行小字 */
 .thumb-slot.note { display: flex; align-items: center; justify-content: center; border-style: dashed; color: var(--ink-3); font-size: 11px; line-height: 13px; text-align: center; white-space: pre-line; }
-.shot-count { white-space: nowrap; }
+.shot-btn { justify-content: center; position: relative; }
+.shot-count { position: absolute; left: calc(50% + 31px); top: calc(50% + 18px); transform: translate(-100%, -100%); background: rgba(21, 32, 59, .78); color: #FFFFFF; font: 600 9px/11px var(--font-num); padding: 0 2px; white-space: nowrap; pointer-events: none; }
+.shot-count.one { display: none; }
 
 /* 单笔详情的截图区（7.7）：大图在 16:9 里完整显示，点了在新标签页打开原图 */
 .bigshot-link { display: block; width: 100%; height: 100%; cursor: zoom-in; }
@@ -489,8 +494,14 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 /* 不再有"一碰就建一笔"的空行：新增一笔只能点「＋ 记一笔」（空行留在 DOM 里给按钮复用，不显示） */
 .sheet tr.empty-row { display: none; }
 /* 盈亏格右边的浅色小字：这一笔实际赚了几个 R。左右留一样的宽度，金额仍在正中 */
-.r-tag { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; font: 11px/1 var(--font-num); color: var(--ink-3); }
-.sheet td.pnl .cell-input[data-col="pnl"], .sheet td.has-tag .cell-input[data-col="pnl"] { padding-left: 44px; padding-right: 44px; }
+/* 盈亏格暗分三格：「改」贴左边、实际几 R 贴右边（浅色小字）、金额在中间那段居中 */
+.r-tag { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; font: 11px/1 var(--font-num); color: var(--ink-3); }
+.sheet td.pnl .cell-tag { left: 3px; }
+.sheet td.pnl .edited-tag { width: 14px; height: 14px; font-size: 9px; }
+.sheet td.pnl .cell-input[data-col="pnl"], .sheet td.has-tag .cell-input[data-col="pnl"] { padding-left: 20px; padding-right: 47px; text-align: center; }
+/* 日期、品种居中；开仓理由和备注的字小半号，多放几个字 */
+.sheet .cell-input[data-col="date"], .sheet .cell-input[data-col="symbol"] { text-align: center; }
+.sheet .cell-input[data-col="reason"], .sheet .cell-input[data-col="note"] { font-size: 13.5px; }
 /* 每个系统最后一行下面的「＋ 记一笔」 */
 .sheet tr.add-row td { padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .add-trade-btn { min-height: 30px; padding: 0 12px; font-size: 13px; color: var(--accent); border-color: var(--line-2); }

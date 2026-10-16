@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  cleanWidths, resizeTarget, COL_MIN, COL_MAX, REASON_MIN,
   COLUMNS, NAV_COLUMNS, NEWLINE_MARK, nextCell, keyAction, resultForKey, isComposingKey, interpretInput, liveValue,
   emptyRowPatch, toCellText, fromCellText, tradeCellText, missingFlags, outcomeChip, headerLabel, segmentHint,
   readOnlyMessage, SHOT_LABEL_TEXT, shotLabelText, hasShotLabel, nextShotLabel, shotThumbPath, shotFilePath, readTransfer,
@@ -27,12 +28,22 @@ const ROWS = [
 ];
 const at = (row, col) => ({ row, col });
 
-test('列定义：12 列、宽度和预览稿一致；键盘能停的格子', () => {
+test('列定义：12 列、默认宽度（2026-10-16 效果图定的）；键盘能停的格子', () => {
   assert.deepEqual(COLUMNS.map((c) => c.key), ['no', 'date', 'symbol', 'direction', 'rr', 'risk', 'tp', 'result', 'pnl', 'reason', 'shots', 'note']);
-  assert.deepEqual(COLUMNS.map((c) => c.width), [48, 104, 84, 56, 72, 80, 108, 84, 156, null, 112, 220]);
+  assert.deepEqual(COLUMNS.map((c) => c.width), [44, 100, 80, 58, 70, 94, 85, 94, 122, null, 120, 250]);
   assert.equal(NAV_COLUMNS.trade.includes('tp'), false, '止盈是自动算的，不停留');
   assert.equal(NAV_COLUMNS.empty.includes('no'), false, '空行的行号不是按钮');
   assert.deepEqual(NAV_COLUMNS.system, ['menu', 'name', 'desc']);
+});
+
+test('列宽：存的值只认识得的列、32–600 的整数、和默认不一样的；坏数据回到默认', () => {
+  assert.deepEqual(cleanWidths({ shots: 160, note: 250, reason: 400, date: 20, rr: 700, symbol: 90.4, risk: '100', zz: 50 }), { shots: 160, symbol: 90 },
+    '备注等于默认不存；开仓理由不能定宽；太窄太宽、不是数字、不认识的列都丢掉');
+  for (const bad of [null, undefined, 'x', [], 3]) assert.deepEqual(cleanWidths(bad), {});
+  assert.deepEqual(resizeTarget('pnl'), { key: 'pnl', sign: 1 }, '拖盈亏右边的线（开仓理由左边）改盈亏列');
+  assert.deepEqual(resizeTarget('reason'), { key: 'shots', sign: -1 }, '拖开仓理由右边的线改截图列，往左拖截图变宽');
+  assert.ok(COL_MIN < Math.min(...COLUMNS.filter((c) => c.width).map((c) => c.width)), '默认宽度都在范围里');
+  assert.ok(REASON_MIN > 0 && COL_MAX >= 600);
 });
 
 test('Enter / ↓：下一行同一列，跳过系统行，最后落到空行；空行再往下不动', () => {
