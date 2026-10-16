@@ -18,6 +18,7 @@ const COLOR_HEX = Object.freeze({ red: '#E5484D', blue: '#1F4FD1', amber: '#D99A
 const COLOR_NAME = Object.freeze({ red: '红', blue: '蓝', amber: '黄', green: '绿' });
 const KIND_TEXT = Object.freeze({ good: '正例', bad: '反例' });
 const TOOLS = Object.freeze([['pin', '编号点'], ['rect', '框'], ['arrow', '箭头'], ['hline', '水平线']]);
+const MOUSE_HINT = '现在是鼠标：点图上已有的批注选中它，可以拖动、改大小。要画新的，先点上面的工具；再点一下那个工具就回到鼠标。';
 const TOOL_HINT = Object.freeze({
   pin: '点空白处放一个编号点，说明栏里会多一条对应的说明。',
   rect: '在空白处按住拖出一个框，圈出关键区域。',
@@ -853,6 +854,7 @@ export function mountStudy(root, store, opts = {}) {
     if (!editor) return;
     const ed = editor;
     editor = null;
+    view.shown.set(ed.id, ed.page()); // 墙上停在最后编辑的那张图
     ed.destroy();
     render();
     const back = Array.from(root.querySelectorAll('.st-card')).find((n) => n.dataset.id === ed.id);
@@ -860,7 +862,9 @@ export function mountStudy(root, store, opts = {}) {
   }
 
   function createEditor(cardId) {
-    const local = { tool: 'pin', color: 'red', selected: -1, undo: [], busy: false, page: 0, target: 0 };
+    // 从墙上点进来：墙上翻到第几张图，就打开第几张
+    // 打开时是鼠标（tool 为 null）：点图只选中、拖动，不画；点一下工具开始画，再点一下回到鼠标
+    const local = { tool: null, color: 'red', selected: -1, undo: [], busy: false, page: view.shown.get(cardId) || 0, target: 0 };
     let edHeld = [];
     const wrap = el('div', 'st-ed-wrap');
     const dlg = el('div', 'st-ed');
@@ -984,6 +988,17 @@ export function mountStudy(root, store, opts = {}) {
       if (!pages.length) update({ marks: drop(c.marks), notes });
       else savePages(pages.map((p) => ({ ...p, marks: drop(p.marks) })), notes);
       paint();
+    }
+
+    /** 切到第 i 张图编辑（超出两头就绕回来） */
+    function goPage(i, focusSel) {
+      const c = card();
+      const n = c ? cardPages(c).length : 0;
+      if (n < 2) return;
+      local.page = ((i % n) + n) % n;
+      local.selected = -1;
+      local.undo = [];
+      paint(focusSel || '#st-pg-' + local.page);
     }
 
     /** 换图的顺序：第 i 张和第 j 张对调 */
@@ -1215,7 +1230,8 @@ export function mountStudy(root, store, opts = {}) {
           b.setAttribute('aria-pressed', String(local.tool === t));
           b.appendChild(icon(ICON[t]));
           b.appendChild(el('span', 'st-tool-text', label));
-          b.addEventListener('click', () => { local.tool = t; local.selected = -1; paint('#st-tool-' + t); });
+          b.title = label + '：点一下开始画，再点一下回到鼠标';
+          b.addEventListener('click', () => { local.tool = local.tool === t ? null : t; local.selected = -1; paint('#st-tool-' + t); });
           tools.appendChild(b);
         }
         tools.appendChild(el('span', 'st-sep'));
@@ -1251,6 +1267,15 @@ export function mountStudy(root, store, opts = {}) {
       svg.setAttribute('aria-label', '在图上画批注');
       svg.removeAttribute('aria-hidden');
       if (editable()) bindDraw(svg);
+      // 好几张图：大图左右的 ‹ › 切到上一张、下一张（和墙上一样；键盘 ← → 也行）
+      if (pages.length > 1) {
+        for (const [d, cls, text, label] of [[-1, 'prev', '‹', '上一张图'], [1, 'next', '›', '下一张图']]) {
+          const b = button('st-flip ' + cls, text, label);
+          b.id = 'st-ed-' + cls;
+          b.addEventListener('click', () => goPage(cur + d, '#st-ed-' + cls));
+          stage.appendChild(b);
+        }
+      }
       left.appendChild(stage);
       if (editable()) left.appendChild(selBarEl(c));
       // 这张图的标签；几张图时还能左右挪、从卡里拿掉
@@ -1336,7 +1361,7 @@ export function mountStudy(root, store, opts = {}) {
       const m = marks[local.selected];
       const bar = el('div', 'st-selbar' + (m ? '' : ' idle'));
       if (!m) {
-        bar.textContent = TOOL_HINT[local.tool] + ' 点图上已有的批注就是选中它，可以拖动、改大小。';
+        bar.textContent = local.tool ? TOOL_HINT[local.tool] + ' 点图上已有的批注就是选中它；再点一下「' + MARK_NAME[local.tool] + '」回到鼠标。' : MOUSE_HINT;
         return bar;
       }
       const what = el('span', 'st-sel-what', '已选中：');
@@ -1438,6 +1463,8 @@ export function mountStudy(root, store, opts = {}) {
           local.selected = -1; // 已经选中了一个：点空白处只是取消选中
           refreshSelection();
           return;
+        } else if (!local.tool) {
+          return; // 鼠标：点空白什么都不画
         } else if (local.tool === 'pin') {
           snapshot();
           const n = pinsBefore(c) + marks.filter((m) => m.t === 'pin').length + 1;
@@ -1549,18 +1576,37 @@ export function mountStudy(root, store, opts = {}) {
       take.placeholder = '这张图最想记住的一句话';
       take.readOnly = !editable();
       take.addEventListener('input', () => update({ take: take.value }));
-      right.appendChild(field('一句话结论（墙上会加粗显示）', take));
+      right.appendChild(field('一句话结论（整张卡的，墙上会显示）', take));
+
+      // 这张图自己的批注：切到哪张图，这里就是哪张的
+      const pages = cardPages(c);
+      const curPage = pages[pageAt(c)];
+      if (curPage) {
+        const pn = el('textarea');
+        pn.id = 'st-pg-note';
+        pn.rows = 4;
+        pn.maxLength = LONG_MAX;
+        pn.value = curPage.img.note || '';
+        pn.placeholder = '这张图想记下什么，写在这里';
+        pn.readOnly = !editable();
+        pn.addEventListener('input', () => {
+          const cur = card();
+          if (!cur) return;
+          const ps = cardPages(cur);
+          const i = pageAt(cur);
+          if (!ps[i]) return;
+          ps[i] = { ...ps[i], img: { ...ps[i].img, note: pn.value } };
+          savePages(ps);
+        });
+        right.appendChild(field(pages.length > 1 ? `批注（${pageName(curPage, pageAt(c))}）` : '批注', pn));
+      }
 
       const notesBox = el('div', 'st-pin-notes');
-      const pages = cardPages(c);
       const pinAt = pinPages(c);
-      let lastPage = -1;
+      const here = pages.length ? pageAt(c) : -1;
       for (const n of c.notes) {
         const pi = pinAt.has(n.n) ? pinAt.get(n.n) : -1;
-        if (pages.length > 1 && pi >= 0 && pi !== lastPage) {
-          notesBox.appendChild(el('div', 'st-notes-grp', pageName(pages[pi], pi)));
-          lastPage = pi;
-        }
+        if (here >= 0 && pi !== here) continue; // 只列这张图上的编号点
         const row = el('div', 'st-pin-note');
         row.dataset.n = String(n.n);
         const selM = pageMarks(c)[local.selected];
@@ -1595,9 +1641,9 @@ export function mountStudy(root, store, opts = {}) {
         }
         notesBox.appendChild(row);
       }
-      if (!c.notes.length) notesBox.appendChild(el('p', 'st-hint', c.img ? '还没有编号点。选「编号点」在图上点一下。' : '放了图以后，可以在图上放编号点，对应这里的说明。'));
+      if (!notesBox.childNodes.length) notesBox.appendChild(el('p', 'st-hint', c.img ? '这张图上还没有编号点。点「编号点」再在图上点一下。' : '放了图以后，可以在图上放编号点，对应这里的说明。'));
       const nf = el('div', 'st-field');
-      nf.appendChild(el('span', null, '编号说明（和图上的编号点一一对应）'));
+      nf.appendChild(el('span', null, pages.length > 1 ? '编号说明（这张图上的）' : '编号说明（和图上的编号点一一对应）'));
       nf.appendChild(notesBox);
       right.appendChild(nf);
 
@@ -1737,6 +1783,10 @@ export function mountStudy(root, store, opts = {}) {
         return;
       }
       if (isTyping(e.target)) return;
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && local.selected < 0 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const c = card();
+        if (c && cardPages(c).length > 1) { e.preventDefault(); goPage(local.page + (e.key === 'ArrowLeft' ? -1 : 1)); return; }
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && local.selected >= 0) { e.preventDefault(); deleteSelected(); return; }
       if (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && local.undo.length) { e.preventDefault(); e.stopPropagation(); undoMarks(); }
     }
@@ -1771,6 +1821,7 @@ export function mountStudy(root, store, opts = {}) {
 
     return {
       id: cardId,
+      page: () => local.page,
       destroy() {
         off();
         document.removeEventListener('keydown', onKeydown, true);

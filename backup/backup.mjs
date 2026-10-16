@@ -47,7 +47,7 @@ const TOPIC_KEYS = ['id', 'name', 'items', 'createdAt'];
 const ITEM_KEYS = ['id', 'name', 'note'];
 // 0.4.1 起一张卡可以有好几张图：第 2 张起放在 more 里（[{ img, marks }]），img 里可以有 label
 const CARD_KEYS = ['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'more', 'notes', 'createdAt', 'updatedAt'];
-const IMG_KEYS = ['file', 'thumb', 'width', 'height', 'bytes', 'label'];
+const IMG_KEYS = ['file', 'thumb', 'width', 'height', 'bytes', 'label', 'note'];
 const PAGE_KEYS = ['img', 'marks'];
 
 /** 已知键按固定顺序在前（缺的不补），不认识的键接在后面，保持原来的相对顺序。 */

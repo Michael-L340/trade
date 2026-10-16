@@ -252,6 +252,19 @@ test('sanitizeCardPatch：more 只留合规的图，最多 MAX_PAGES - 1 张；�
   assert.deepEqual(sanitizeCardPatch({ more: 'x' }).rejected, ['more']);
 });
 
+test('每张图自己的批注 img.note：留着（截到 LONG_MAX）、空的不写、不是字符串要报；固定格式在 label 后面', () => {
+  assert.equal(sanitizeCardPatch({ img: { ...IMG(1, '开仓时'), note: '第一行\n第二行' } }).patch.img.note, '第一行\n第二行');
+  assert.equal('note' in sanitizeCardPatch({ img: { ...IMG(1), note: '   ' } }).patch.img, false);
+  const base = { id: 'c_1', item: '', title: '', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: { ...IMG(1), note: 5 }, marks: [], notes: [] };
+  assert.match(validateStudy({ cards: [base] }).map((e) => e.message).join(), /批注必须是字符串/);
+  const { a, store } = setup();
+  a.addCard({ img: { ...IMG(1, '开仓时'), note: '甲' }, more: [{ img: { ...IMG(2), note: '乙' }, marks: [] }] });
+  const text = serialize(store.get().journal);
+  assert.match(text, /"label":"开仓时","note":"甲"\}/);
+  assert.match(text, /"more":\[\{"img":\{"file":"shots\/t_1\/sh_2.webp","thumb":"shots\/t_1\/sh_2.thumb.webp","note":"乙"\}/);
+  assert.equal(serialize(JSON.parse(text)), text);
+});
+
 test('validateStudy：more 结构不对要报；没有第一张图却有 more 也要报', () => {
   const base = { id: 'c_1', item: '', title: '', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: IMG(1), marks: [], notes: [] };
   assert.deepEqual(validateStudy({ cards: [{ ...base, more: [{ img: IMG(2, '持仓中'), marks: [pin(1)] }] }] }), []);

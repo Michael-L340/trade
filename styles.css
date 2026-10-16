@@ -613,7 +613,8 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .st-flip { position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 44px; padding: 0; border: 0; background: rgba(21, 32, 59, .55); color: #FFFFFF; font-size: 24px; line-height: 44px; cursor: pointer; opacity: 0; transition: opacity .12s; }
 .st-flip.prev { left: 0; }
 .st-flip.next { right: 0; }
-.st-card:hover .st-flip, .st-flip:focus-visible { opacity: 1; }
+.st-card:hover .st-flip, .st-stage:hover .st-flip, .st-flip:focus-visible { opacity: 1; }
+.st-stage .st-flip { z-index: 2; }
 .st-flip:hover { background: rgba(21, 32, 59, .8); }
 @media (hover: none) { .st-flip { opacity: .6; } }
 .st-strip { display: flex; gap: 6px; padding: 6px 6px 0; min-width: 0; }
