@@ -168,6 +168,15 @@ test('统计：没有亏损时实际盈亏比和盈利因子是 null；n < 5 不
   assert.equal(computeStats(items([2, 1.5, 3, 1, -1])).ciHalfWidth !== null, true, 'n = 5 开始给误差');
 });
 
+test('统计：打平的交易不算进胜率，也不算进误差的样本数', () => {
+  const s = computeStats(items([2, -1, 0, -1, 1.5, -1]));
+  assert.equal(s.n, 6, '笔数照算');
+  near(s.winRate, 0.4, '2 胜 3 负 1 平 → 2 / 5');
+  assert.equal(s.ciHalfWidth !== null, true, '胜 + 负 = 5 开始给误差');
+  assert.equal(computeStats(items([2, -1, 0, -1, 1.5])).ciHalfWidth, null, '胜 + 负 = 4 不给误差');
+  assert.equal(computeStats(items([0, 0])).winRate, null, '全是打平时胜率显示"—"');
+});
+
 test('统计：最大连亏遇到保本或盈利就重新计数；最大回撤从 0 开始算', () => {
   assert.equal(computeStats(items([-1, -1, 0, -1])).maxLossStreak, 2);
   assert.equal(computeStats(items([-1, -1, -1, 2, -1])).maxLossStreak, 3);

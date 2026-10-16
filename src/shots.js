@@ -25,27 +25,28 @@ import { deriveTrade } from './calc.js';
 import { cleanText, isoNow, newId } from './model.js';
 import { cardFiles, studyFiles } from './study.js';
 
-/** 截图标签的三种固定取值（第 5 节）：开仓时、平仓后、不显示。也可以是用户自己打的字（normalizeLabel） */
-export const LABELS = Object.freeze(['open', 'close', '']);
+/** 截图标签的四种固定取值（第 5 节）：开仓时、持仓中、平仓后、不显示。也可以是用户自己打的字（normalizeLabel） */
+export const LABELS = Object.freeze(['open', 'hold', 'close', '']);
 /** 自己打的标签最多几个字（缩略图下面一行放得下） */
 export const LABEL_MAX = 20;
 /** 标签在界面上的文字（详情里缩略图下方；空标签显示"无"） */
-export const LABEL_TEXT = Object.freeze({ open: '开仓时', close: '平仓后', '': '无' });
+export const LABEL_TEXT = Object.freeze({ open: '开仓时', hold: '持仓中', close: '平仓后', '': '无' });
 
 /**
  * 用户在标签上打的字 → 存进 shots[].label 的值：去掉首尾空白、连续空白并成一个、最多 LABEL_MAX 个字；
- * 打"开仓时"存 'open'、"平仓后"存 'close'，空着或打"无"存 ''，其余原样存。不是字符串返回 null。
+ * 打"开仓时"存 'open'、"持仓中"存 'hold'、"平仓后"存 'close'，空着或打"无"存 ''，其余原样存。不是字符串返回 null。
  */
 export function normalizeLabel(text) {
   if (typeof text !== 'string') return null;
   const t = Array.from(cleanText(text).replace(/\s+/g, ' ').trim()).slice(0, LABEL_MAX).join('').trim();
   if (t === '' || t === '无') return '';
   if (t === 'open' || t === LABEL_TEXT.open) return 'open';
+  if (t === 'hold' || t === LABEL_TEXT.hold) return 'hold';
   if (t === 'close' || t === LABEL_TEXT.close) return 'close';
   return t;
 }
 
-/** 点标签时的下一个：开仓时 → 平仓后 → 无 → 开仓时 */
+/** 点标签时的下一个：开仓时 → 持仓中 → 平仓后 → 无 → 开仓时 */
 export function nextLabel(label) {
   return LABELS[(LABELS.indexOf(label) + 1) % LABELS.length];
 }
@@ -318,7 +319,7 @@ function recordBlob(rec) {
  * @param {object} ctx 见文件开头
  * @param {string} tradeId
  * @param {Blob} blob 图片
- * @param {'open'|'close'|''} [label] 不传（或不认识）时按 defaultLabel：没出场"开仓时"、已出场"平仓后"
+ * @param {'open'|'hold'|'close'|''} [label] 不传（或不认识）时按 defaultLabel：没出场"开仓时"、已出场"平仓后"
  * @returns {Promise<object>} 加进去的那条截图元数据
  *   出错时抛 ShotError（只读、这一笔不在了）、ImageError（图片读不出、压不下来）或 StorageError（存储空间不够等），
  *   这些错误的 message 都可以直接显示给用户；出错时不会留下元数据，已经写的文件会删掉。
@@ -439,7 +440,7 @@ function makeUndo(c, { tradeId, shot, index, demo, saved }) {
 }
 
 /**
- * 改一张截图的标签：'open'、'close'、''，或者用户打的字（先过 normalizeLabel，"开仓时"会存成 'open'）。
+ * 改一张截图的标签：'open'、'hold'、'close'、''，或者用户打的字（先过 normalizeLabel，"开仓时"会存成 'open'）。
  * @returns {boolean} 改了返回 true；不是字符串、找不到、没变化、只读时返回 false
  */
 export function setShotLabel(ctx, tradeId, shotId, text) {

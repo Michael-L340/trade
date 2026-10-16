@@ -341,11 +341,11 @@ export function readOnlyMessage(reason) {
 // ====================================================================
 
 /** 截图标签的显示文字（第 5 节）。空标签在详情里也要能点着切换，所以显示一个"无" */
-export const SHOT_LABEL_TEXT = Object.freeze({ open: '开仓时', close: '平仓后', '': '无' });
+export const SHOT_LABEL_TEXT = Object.freeze({ open: '开仓时', hold: '持仓中', close: '平仓后', '': '无' });
 
-/** 标签的显示文字：open、close 换成中文，自己打的字原样显示；空的、不是字符串的显示"无" */
+/** 标签的显示文字：open、hold、close 换成中文，自己打的字原样显示；空的、不是字符串的显示"无" */
 export function shotLabelText(label) {
-  if (label === 'open' || label === 'close') return SHOT_LABEL_TEXT[label];
+  if (label === 'open' || label === 'hold' || label === 'close') return SHOT_LABEL_TEXT[label];
   return typeof label === 'string' && label !== '' ? label : SHOT_LABEL_TEXT[''];
 }
 
@@ -354,9 +354,10 @@ export function hasShotLabel(label) {
   return typeof label === 'string' && label !== '';
 }
 
-/** 点标签时换成哪个：开仓时 → 平仓后 → 无 → 开仓时 */
+/** 点标签时换成哪个：开仓时 → 持仓中 → 平仓后 → 无 → 开仓时 */
 export function nextShotLabel(label) {
-  if (label === 'open') return 'close';
+  if (label === 'open') return 'hold';
+  if (label === 'hold') return 'close';
   if (label === 'close') return '';
   return 'open';
 }

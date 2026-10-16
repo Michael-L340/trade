@@ -149,10 +149,11 @@ test('shotPaths：shots/<交易 id>/<截图 id>.webp 和 .thumb.webp，JPEG 用 
   }
 });
 
-test('标签：三种取值、显示文字、点一下换下一个', () => {
-  assert.deepEqual(LABELS, ['open', 'close', '']);
-  assert.deepEqual(LABEL_TEXT, { open: '开仓时', close: '平仓后', '': '无' });
-  assert.equal(nextLabel('open'), 'close');
+test('标签：四种取值、显示文字、点一下换下一个', () => {
+  assert.deepEqual(LABELS, ['open', 'hold', 'close', '']);
+  assert.deepEqual(LABEL_TEXT, { open: '开仓时', hold: '持仓中', close: '平仓后', '': '无' });
+  assert.equal(nextLabel('open'), 'hold');
+  assert.equal(nextLabel('hold'), 'close');
   assert.equal(nextLabel('close'), '');
   assert.equal(nextLabel(''), 'open');
   assert.equal(nextLabel(undefined), 'open');
@@ -480,6 +481,7 @@ test('撤销时文件写回失败：元数据照样放回，错误交给 ctx.onE
 test('normalizeLabel：开仓时/平仓后存成 open/close，空和"无"存空串，自己打的字去空白、截到 LABEL_MAX 个字', () => {
   assert.equal(normalizeLabel('开仓时'), 'open');
   assert.equal(normalizeLabel(' 平仓后 '), 'close');
+  assert.equal(normalizeLabel('持仓中'), 'hold');
   assert.equal(normalizeLabel('open'), 'open');
   assert.equal(normalizeLabel(''), '');
   assert.equal(normalizeLabel('   '), '');

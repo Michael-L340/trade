@@ -74,7 +74,7 @@ export function groupRows(rows) {
 /**
  * 一组交易的统计（6.3）。items 是 groupRows 产出的交易项（按表格顺序）。
  * 只有算得出 R 的交易才进统计；没法算的指标返回 null（界面显示"—"）。
- * ciHalfWidth 是胜率误差，单位是百分点；cumulative 是从 0 开始的累计 R 序列；
+ * 胜率只看分出胜负的交易（打平的不算进分母）；ciHalfWidth 是胜率误差，单位是百分点；cumulative 是从 0 开始的累计 R 序列；
  * closed 是进了统计的那些交易项。
  */
 export function computeStats(items) {
@@ -84,8 +84,9 @@ export function computeStats(items) {
   const n = closed.length;
   const wins = closed.filter(function (it) { return it.d.r > EPS; });
   const losses = closed.filter(function (it) { return it.d.r < -EPS; });
-  const winRate = n ? wins.length / n : null;
-  const ciHalfWidth = n >= 5 ? 1.96 * Math.sqrt(winRate * (1 - winRate) / n) * 100 : null;
+  const decided = wins.length + losses.length;
+  const winRate = decided ? wins.length / decided : null;
+  const ciHalfWidth = decided >= 5 ? 1.96 * Math.sqrt(winRate * (1 - winRate) / decided) * 100 : null;
   const avgWinR = mean(wins.map(function (it) { return it.d.r; }));
   const avgLossR = mean(losses.map(function (it) { return Math.abs(it.d.r); }));
   const payoff = avgWinR !== null && avgLossR !== null ? avgWinR / avgLossR : null;

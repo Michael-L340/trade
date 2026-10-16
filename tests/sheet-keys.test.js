@@ -319,9 +319,10 @@ test('结果格标签、表头、样本提示、只读说明', () => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-test('截图标签：显示文字，点一下换成哪个（开仓时 → 平仓后 → 无 → 开仓时）', () => {
-  assert.deepEqual(Object.keys(SHOT_LABEL_TEXT).sort(), ['', 'close', 'open']);
+test('截图标签：显示文字，点一下换成哪个（开仓时 → 持仓中 → 平仓后 → 无 → 开仓时）', () => {
+  assert.deepEqual(Object.keys(SHOT_LABEL_TEXT).sort(), ['', 'close', 'hold', 'open']);
   assert.equal(shotLabelText('open'), '开仓时');
+  assert.equal(shotLabelText('hold'), '持仓中');
   assert.equal(shotLabelText('close'), '平仓后');
   assert.equal(shotLabelText(''), '无');
   assert.equal(shotLabelText(undefined), '无', '不是字符串的当成空标签');
@@ -330,11 +331,12 @@ test('截图标签：显示文字，点一下换成哪个（开仓时 → 平仓
   assert.equal(hasShotLabel('回踩确认'), true);
   assert.equal(hasShotLabel(''), false);
   assert.equal(hasShotLabel(undefined), false);
-  assert.equal(nextShotLabel('open'), 'close');
+  assert.equal(nextShotLabel('open'), 'hold');
+  assert.equal(nextShotLabel('hold'), 'close');
   assert.equal(nextShotLabel('close'), '');
   assert.equal(nextShotLabel(''), 'open');
   assert.equal(nextShotLabel('nope'), 'open');
-  for (const l of ['open', 'close', '']) assert.equal(nextShotLabel(nextShotLabel(nextShotLabel(l))), l, '点三下回到原样');
+  for (const l of ['open', 'hold', 'close', '']) assert.equal(nextShotLabel(nextShotLabel(nextShotLabel(nextShotLabel(l)))), l, '点四下回到原样');
 });
 
 test('截图路径：缩略图优先 thumb、原图优先 file，缺了一个就用另一个', () => {

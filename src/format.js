@@ -109,7 +109,7 @@ export function fmtDirection(direction) {
 export const OUTCOME_LABEL = Object.freeze({ win: '盈', loss: '亏', breakeven: '平', open: '持仓中', invalid: '缺数' });
 
 /** 截图标签的显示文字 */
-export const SHOT_LABEL = Object.freeze({ open: '开仓时', close: '平仓后', '': '' });
+export const SHOT_LABEL = Object.freeze({ open: '开仓时', hold: '持仓中', close: '平仓后', '': '' });
 
 // ---------- 解析 ----------
 
