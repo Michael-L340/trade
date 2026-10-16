@@ -64,10 +64,17 @@ export function cleanWidths(raw) {
   return out;
 }
 
-/** 拖某条竖线改的是哪一列：竖线左边那一列；开仓理由占剩下的宽度，拖它右边的线改的是截图列（往左拖截图变宽） */
+/**
+ * 拖某一列右边的竖线改的是哪一列。开仓理由占剩下的宽度，所以：
+ * 开仓理由左边的线改线左边那一列（往右拉变宽）；开仓理由右边的线改线右边那一列（往右拉变窄），
+ * 多出来、少掉的宽度都由开仓理由接着，竖线总是跟着鼠标走。
+ */
 export function resizeTarget(key) {
-  if (key === 'reason') return { key: 'shots', sign: -1 };
-  return { key, sign: 1 };
+  const i = COLUMNS.findIndex((c) => c.key === key);
+  const reason = COLUMNS.findIndex((c) => c.key === 'reason');
+  if (i < reason) return { key, sign: 1 };
+  const next = COLUMNS[i + 1];
+  return next ? { key: next.key, sign: -1 } : null;
 }
 
 const COL_ORDER = COLUMNS.map((c) => c.key);
@@ -706,7 +713,9 @@ export function mountSheet(container, store, opts = {}) {
     listen(rs, 'pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      const { key: target, sign } = resizeTarget(key);
+      const t = resizeTarget(key);
+      if (!t) return;
+      const { key: target, sign } = t;
       const x0 = e.clientX;
       const w0 = widthOf(target);
       try { rs.setPointerCapture(e.pointerId); } catch { /* 没有也能拖 */ }
@@ -727,7 +736,8 @@ export function mountSheet(container, store, opts = {}) {
     });
     listen(rs, 'dblclick', (e) => {
       e.preventDefault();
-      setWidth(resizeTarget(key).key, null);
+      const t = resizeTarget(key);
+      if (t) setWidth(t.key, null);
       saveWidths();
     });
     return rs;

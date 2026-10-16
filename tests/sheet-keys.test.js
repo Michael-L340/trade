@@ -42,6 +42,8 @@ test('列宽：存的值只认识得的列、32–600 的整数、和默认不�
   for (const bad of [null, undefined, 'x', [], 3]) assert.deepEqual(cleanWidths(bad), {});
   assert.deepEqual(resizeTarget('pnl'), { key: 'pnl', sign: 1 }, '拖盈亏右边的线（开仓理由左边）改盈亏列');
   assert.deepEqual(resizeTarget('reason'), { key: 'shots', sign: -1 }, '拖开仓理由右边的线改截图列，往左拖截图变宽');
+  assert.deepEqual(resizeTarget('shots'), { key: 'note', sign: -1 }, '拖截图和备注之间的线改备注，往右拉备注变窄');
+  assert.equal(resizeTarget('note'), null, '最右边没有线');
   assert.ok(COL_MIN < Math.min(...COLUMNS.filter((c) => c.width).map((c) => c.width)), '默认宽度都在范围里');
   assert.ok(REASON_MIN > 0 && COL_MAX >= 600);
 });
