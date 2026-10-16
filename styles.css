@@ -666,7 +666,20 @@ body.st-ed-open { overflow: hidden; }
 .st-sep { width: 1px; height: 22px; background: var(--line-2); margin-inline: 2px; }
 .st-stage { border: 1px solid var(--line-2); }
 .st-stage svg { touch-action: none; cursor: crosshair; }
-.st-stage.select svg { cursor: default; }
+/* 图下面那一条：没选中时是灰色提示；选中了一个批注是它的大小、实线 / 虚线、名字、删除 */
+.st-selbar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-height: 42px; padding: 6px 10px; background: var(--sel); border: 1px solid var(--accent); font-size: 13px; }
+.st-selbar.idle { background: var(--head); border-color: var(--line); color: var(--ink-3); font-size: 12px; }
+.st-sel-what b { color: var(--accent); }
+.st-sel-size { display: inline-flex; align-items: center; gap: 6px; }
+.st-sel-size input { width: 120px; accent-color: var(--accent); }
+.st-seg { display: inline-flex; border: 1px solid var(--line-2); background: var(--surface); }
+.st-seg button { border: 0; background: transparent; padding: 3px 10px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.st-seg button + button { border-left: 1px solid var(--line-2); }
+.st-seg button[aria-pressed="true"] { background: var(--accent); color: #FFFFFF; }
+.st-sel-name { width: 130px; border: 1px solid var(--line-2); background: var(--surface); padding: 3px 8px; font: inherit; font-size: 13px; }
+/* 说明栏：前面的圆点编号点了能选中图上的点；选中的那条说明亮起来 */
+button.st-dot { border: 0; padding: 0; cursor: pointer; margin-top: 8px; }
+.st-pin-note.on { outline: 2px solid var(--accent); outline-offset: 3px; }
 .st-hint { font-size: 12px; color: var(--ink-3); }
 .st-drop { border: 1px dashed var(--line-2); padding: 48px 16px; text-align: center; color: var(--ink-2); display: grid; gap: 10px; justify-items: center; background: var(--head); }
 .st-ed-right { padding: 12px 14px; display: grid; gap: 14px; align-content: start; min-width: 0; }

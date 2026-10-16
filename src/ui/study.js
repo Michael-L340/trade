@@ -9,7 +9,7 @@
 // 编辑框开着的时候，后面的卡片墙不跟着每个字重画，关掉时再画一次（不打断输入法、不反复要图片地址）。
 // 全部用 createElement / textContent，不拼 HTML；颜色、位置用 element.style 或 SVG 属性（页面有内容安全策略）。
 
-import { MARK_W, MARK_H, MARK_COLORS, MAX_PAGES, cardPages, findItem, pagesPatch, LONG_MAX, SHORT_MAX } from '../study.js';
+import { MARK_W, MARK_H, MARK_COLORS, MARK_SIZE_MAX, MARK_SIZE_MIN, MAX_PAGES, cardPages, findItem, isDashed, pagesPatch, LONG_MAX, SHORT_MAX } from '../study.js';
 import { confirmDialog, showToast } from './toast.js';
 import { errorText, readTransfer, readOnlyMessage, shotUrls } from './sheet.js';
 
@@ -17,14 +17,14 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const COLOR_HEX = Object.freeze({ red: '#E5484D', blue: '#1F4FD1', amber: '#D99A0B', green: '#1E9E6A' });
 const COLOR_NAME = Object.freeze({ red: '红', blue: '蓝', amber: '黄', green: '绿' });
 const KIND_TEXT = Object.freeze({ good: '正例', bad: '反例' });
-const TOOLS = Object.freeze([['pin', '编号点'], ['rect', '框'], ['arrow', '箭头'], ['hline', '水平线'], ['select', '选中']]);
+const TOOLS = Object.freeze([['pin', '编号点'], ['rect', '框'], ['arrow', '箭头'], ['hline', '水平线']]);
 const TOOL_HINT = Object.freeze({
-  pin: '在图上点一下放一个编号点，说明栏里会多一条对应的说明。',
-  rect: '按住拖出一个框，圈出关键区域。',
-  arrow: '按住从起点拖到终点。',
-  hline: '在价位上点一下画一条水平线，说明栏里可以给它起名字。',
-  select: '点一下选中某个批注，再按 Delete 或点「删除选中」；选中后点颜色可以换色。',
+  pin: '点空白处放一个编号点，说明栏里会多一条对应的说明。',
+  rect: '在空白处按住拖出一个框，圈出关键区域。',
+  arrow: '在空白处按住从起点拖到终点。',
+  hline: '在价位上点一下画一条水平线。',
 });
+const MARK_NAME = Object.freeze({ pin: '编号点', rect: '框', arrow: '箭头', hline: '水平线' });
 const ICON = Object.freeze({
   pin: 'M8 1.5a4.5 4.5 0 0 1 4.5 4.5c0 3.4-4.5 8.5-4.5 8.5S3.5 9.4 3.5 6A4.5 4.5 0 0 1 8 1.5z',
   rect: 'M2 3.5h12v9H2z',
@@ -73,41 +73,72 @@ function panelIcon() {
 const caretIcon = () => icon('M4.5 6.5L8 10l3.5-3.5');
 const isTyping = (node) => !!node && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT' || node.isContentEditable);
 
-/** 把批注画进一个 viewBox 为 1000×562 的 svg（selected 是选中的那个的下标） */
-export function drawMarks(svg, marks, selected = -1) {
+/**
+ * 把批注画进一个 viewBox 为 1000×562 的 svg。
+ * opts.edit（编辑框里）：细线外面加一圈看不见的感应区（data-band，好点中），选中的那个（selected 是下标）
+ * 画虚线外框和拖动用的小方块（data-h）。
+ */
+export function drawMarks(svg, marks, selected = -1, opts = {}) {
+  const edit = !!opts.edit;
   svg.textContent = '';
   (marks || []).forEach((m, i) => {
     const col = COLOR_HEX[m.c] || COLOR_HEX.red;
+    const s = typeof m.s === 'number' && m.s > 0 ? m.s : 1;
+    const dash = isDashed(m) ? { 'stroke-dasharray': `${10 * s} ${6 * s}` } : {};
     const g = sv('g', { 'data-i': i });
-    const sel = i === selected;
     if (m.t === 'rect') {
-      g.appendChild(sv('rect', { x: m.x, y: m.y, width: m.w, height: m.h, fill: col, 'fill-opacity': 0.14, stroke: col, 'stroke-width': sel ? 4 : 2.5, 'vector-effect': 'non-scaling-stroke' }));
+      g.appendChild(sv('rect', { x: m.x, y: m.y, width: m.w, height: m.h, fill: col, 'fill-opacity': 0.14, stroke: col, 'stroke-width': 2.5 * s, 'vector-effect': 'non-scaling-stroke', ...dash }));
     } else if (m.t === 'arrow') {
       const a = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
-      const L = 22;
-      g.appendChild(sv('line', { x1: m.x1, y1: m.y1, x2: m.x2 - Math.cos(a) * 10, y2: m.y2 - Math.sin(a) * 10, stroke: col, 'stroke-width': sel ? 6 : 4, 'stroke-linecap': 'round' }));
+      const L = 22 * s;
+      if (edit) g.appendChild(sv('line', { x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2, stroke: 'transparent', 'stroke-width': 22, 'data-band': '' }));
+      g.appendChild(sv('line', { x1: m.x1, y1: m.y1, x2: m.x2 - Math.cos(a) * L * 0.5, y2: m.y2 - Math.sin(a) * L * 0.5, stroke: col, 'stroke-width': 4 * s, 'stroke-linecap': dash['stroke-dasharray'] ? 'butt' : 'round', ...dash }));
       const p = [[m.x2, m.y2], [m.x2 - L * Math.cos(a - 0.45), m.y2 - L * Math.sin(a - 0.45)], [m.x2 - L * Math.cos(a + 0.45), m.y2 - L * Math.sin(a + 0.45)]];
       g.appendChild(sv('polygon', { points: p.map((q) => q.join(',')).join(' '), fill: col }));
     } else if (m.t === 'hline') {
-      g.appendChild(sv('line', { x1: 0, y1: m.y, x2: MARK_W, y2: m.y, stroke: col, 'stroke-width': sel ? 4 : 2.5, 'stroke-dasharray': '10 6', 'vector-effect': 'non-scaling-stroke' }));
+      if (edit) g.appendChild(sv('line', { x1: 0, y1: m.y, x2: MARK_W, y2: m.y, stroke: 'transparent', 'stroke-width': 18, 'data-band': '' }));
+      g.appendChild(sv('line', { x1: 0, y1: m.y, x2: MARK_W, y2: m.y, stroke: col, 'stroke-width': 2.5 * s, 'vector-effect': 'non-scaling-stroke', ...dash }));
       if (m.label) {
-        const t = sv('text', { x: MARK_W - 12, y: m.y - 8, 'text-anchor': 'end', 'font-size': 24, 'font-weight': 600, fill: col, 'paint-order': 'stroke', stroke: '#FFFFFF', 'stroke-width': 5 });
+        const t = sv('text', { x: MARK_W - 12, y: m.y - 8 * s, 'text-anchor': 'end', 'font-size': 24 * s, 'font-weight': 600, fill: col, 'paint-order': 'stroke', stroke: '#FFFFFF', 'stroke-width': 5 });
         t.textContent = m.label;
         g.appendChild(t);
       }
     } else if (m.t === 'pin') {
-      g.appendChild(sv('circle', { cx: m.x, cy: m.y, r: sel ? 27 : 23, fill: col, stroke: '#FFFFFF', 'stroke-width': 4 }));
-      const t = sv('text', { x: m.x, y: m.y + 9, 'text-anchor': 'middle', 'font-size': 26, 'font-weight': 700, fill: '#FFFFFF' });
+      g.appendChild(sv('circle', { cx: m.x, cy: m.y, r: 23 * s, fill: col, stroke: '#FFFFFF', 'stroke-width': 4 }));
+      const t = sv('text', { x: m.x, y: m.y + 9 * s, 'text-anchor': 'middle', 'font-size': 26 * s, 'font-weight': 700, fill: '#FFFFFF', 'pointer-events': 'none' });
       t.textContent = String(m.n);
       g.appendChild(t);
     }
     svg.appendChild(g);
   });
+  const m = edit ? (marks || [])[selected] : null;
+  if (!m) return;
+  const s = typeof m.s === 'number' && m.s > 0 ? m.s : 1;
+  const SEL = '#1F4FD1';
+  const box = (x, y, w, h) => svg.appendChild(sv('rect', { x, y, width: w, height: h, fill: 'none', stroke: SEL, 'stroke-width': 1.5, 'stroke-dasharray': '6 4', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }));
+  const handle = (x, y, k, cursor) => svg.appendChild(sv('rect', { x: x - 9, y: y - 9, width: 18, height: 18, fill: '#FFFFFF', stroke: SEL, 'stroke-width': 2.5, 'data-h': k, style: 'cursor:' + cursor }));
+  if (m.t === 'rect') {
+    box(m.x - 6, m.y - 6, m.w + 12, m.h + 12);
+    handle(m.x, m.y, 'nw', 'nwse-resize');
+    handle(m.x + m.w, m.y, 'ne', 'nesw-resize');
+    handle(m.x, m.y + m.h, 'sw', 'nesw-resize');
+    handle(m.x + m.w, m.y + m.h, 'se', 'nwse-resize');
+  } else if (m.t === 'arrow') {
+    handle(m.x1, m.y1, 'p1', 'grab');
+    handle(m.x2, m.y2, 'p2', 'grab');
+  } else if (m.t === 'pin') {
+    const r = 23 * s + 8;
+    box(m.x - r, m.y - r, 2 * r, 2 * r);
+    handle(m.x + r, m.y + r, 'size', 'nwse-resize');
+  } else if (m.t === 'hline') {
+    box(0, m.y - 12 * s, MARK_W, 24 * s);
+    handle(MARK_W - 14, m.y, 'y', 'ns-resize');
+  }
 }
 
-function marksSvg(marks, selected) {
+function marksSvg(marks, selected, edit = false) {
   const svg = sv('svg', { viewBox: `0 0 ${MARK_W} ${MARK_H}`, preserveAspectRatio: 'none', 'aria-hidden': 'true' });
-  drawMarks(svg, marks, selected);
+  drawMarks(svg, marks, selected, { edit });
   return svg;
 }
 
@@ -175,7 +206,7 @@ export function mountStudy(root, store, opts = {}) {
 
   // ---------- 图片 ----------
   /** 一个 16:9 的图框：卡片第 page 张图（异步取地址）+ 这张图的批注。没有图时显示"还没放图"。extra 是叠在图上的东西 */
-  function shotBox(card, { full = false, selected = -1, extra = null, page = 0 } = {}) {
+  function shotBox(card, { full = false, selected = -1, extra = null, page = 0, edit = false } = {}) {
     const box = el('div', 'st-shot');
     const pg = cardPages(card)[page] || null;
     const img = pg ? pg.img : null;
@@ -194,7 +225,7 @@ export function mountStudy(root, store, opts = {}) {
       box.classList.add('empty');
       box.appendChild(el('span', 'st-shot-note', '还没放图'));
     }
-    box.appendChild(marksSvg(pg ? pg.marks : card.marks, selected));
+    box.appendChild(marksSvg(pg ? pg.marks : card.marks, selected, edit));
     for (const x of [].concat(extra || [])) if (x) box.appendChild(x);
     return box;
   }
@@ -1126,27 +1157,21 @@ export function mountStudy(root, store, opts = {}) {
         undo.disabled = !local.undo.length;
         undo.addEventListener('click', undoMarks);
         tools.appendChild(undo);
-        if (local.tool === 'select' && local.selected >= 0) {
-          const del = button('st-tool', '删除选中');
-          del.addEventListener('click', deleteSelected);
-          tools.appendChild(del);
-        }
         const swap = button('st-tool', local.busy ? '处理中…' : pages.length > 1 ? '换这张图' : '换图');
         swap.disabled = local.busy;
         swap.addEventListener('click', () => pickImage(cur));
         tools.appendChild(swap);
         left.appendChild(tools);
       }
-      const stage = shotBox(c, { full: true, selected: local.selected, page: cur });
+      const stage = shotBox(c, { full: true, selected: local.selected, page: cur, edit: editable() });
       stage.classList.add('st-stage');
-      if (local.tool === 'select') stage.classList.add('select');
       const svg = stage.querySelector('svg');
       svg.setAttribute('role', 'img');
       svg.setAttribute('aria-label', '在图上画批注');
       svg.removeAttribute('aria-hidden');
       if (editable()) bindDraw(svg);
       left.appendChild(stage);
-      if (editable()) left.appendChild(el('p', 'st-hint', TOOL_HINT[local.tool]));
+      if (editable()) left.appendChild(selBarEl(c));
       // 这张图的标签；几张图时还能左右挪、从卡里拿掉
       if (editable()) {
         const row = el('div', 'st-page-row');
@@ -1185,9 +1210,116 @@ export function mountStudy(root, store, opts = {}) {
       return left;
     }
 
+    /** 只换了选中的是哪个（数据没变）：重画图上的批注、换设置条、亮对应的说明，不重建整个编辑框（不打断打字） */
+    function refreshSelection() {
+      const c = card();
+      if (!c) return;
+      const svg = dlg.querySelector('.st-stage svg');
+      if (svg) drawMarks(svg, pageMarks(c), local.selected, { edit: editable() });
+      const bar = dlg.querySelector('.st-selbar');
+      if (bar) bar.replaceWith(selBarEl(c));
+      const m = pageMarks(c)[local.selected];
+      for (const row of dlg.querySelectorAll('.st-pin-note')) row.classList.toggle('on', !!m && m.t === 'pin' && Number(row.dataset.n) === m.n);
+    }
+
+    /** 选中整张卡里第 n 号编号点（在别的图上就先切过去） */
+    function selectPin(n, focusNote) {
+      const c = card();
+      if (!c) return;
+      let k = 0;
+      const pages = cardPages(c);
+      for (let pi = 0; pi < pages.length; pi++) {
+        const idx = pages[pi].marks.findIndex((m) => m.t === 'pin' && ++k === n);
+        if (idx < 0) continue;
+        if (pi !== pageAt(c)) {
+          local.page = pi;
+          local.selected = idx;
+          local.undo = [];
+          paint(focusNote ? '#st-note-' + n : null);
+        } else {
+          local.selected = idx;
+          refreshSelection();
+          if (focusNote) { const t = dlg.querySelector('#st-note-' + n); if (t) t.focus({ preventScroll: true }); }
+        }
+        return;
+      }
+    }
+
+    /** 图下面那一条：没选中时是提示；选中了是它的大小、实线 / 虚线、名字（水平线）、删除 */
+    function selBarEl(c) {
+      const marks = pageMarks(c);
+      const m = marks[local.selected];
+      const bar = el('div', 'st-selbar' + (m ? '' : ' idle'));
+      if (!m) {
+        bar.textContent = TOOL_HINT[local.tool] + ' 点图上已有的批注就是选中它，可以拖动、改大小。';
+        return bar;
+      }
+      const what = el('span', 'st-sel-what', '已选中：');
+      what.appendChild(el('b', null, MARK_NAME[m.t] + (m.t === 'pin' ? ' ' + m.n : '')));
+      bar.appendChild(what);
+      const svgNow = () => dlg.querySelector('.st-stage svg');
+      const withChange = (patch) => marks.map((x, i) => (i === local.selected ? { ...x, ...patch } : x));
+      const size = el('input');
+      size.type = 'range';
+      size.id = 'st-sel-size';
+      size.min = String(MARK_SIZE_MIN);
+      size.max = String(MARK_SIZE_MAX);
+      size.step = '0.1';
+      size.value = String(m.s || 1);
+      size.setAttribute('aria-label', '大小');
+      size.addEventListener('input', () => { const svg = svgNow(); if (svg) drawMarks(svg, withChange({ s: Number(size.value) }), local.selected, { edit: true }); });
+      size.addEventListener('change', () => { snapshot(); setMarks(withChange({ s: Number(size.value) }), null, '#st-sel-size'); });
+      const sl = el('label', 'st-sel-size');
+      sl.appendChild(el('span', null, '大小'));
+      sl.appendChild(size);
+      bar.appendChild(sl);
+      if (m.t !== 'pin') {
+        const seg = el('span', 'st-seg');
+        seg.setAttribute('role', 'group');
+        seg.setAttribute('aria-label', '线型');
+        for (const [v, t] of [[false, '实线'], [true, '虚线']]) {
+          const b = button(null, t);
+          b.id = v ? 'st-sel-dash' : 'st-sel-solid';
+          b.setAttribute('aria-pressed', String(isDashed(m) === v));
+          b.addEventListener('click', () => { if (isDashed(m) === v) return; snapshot(); setMarks(withChange({ dash: v }), null, '#' + b.id); });
+          seg.appendChild(b);
+        }
+        bar.appendChild(seg);
+      }
+      if (m.t === 'hline') {
+        const name = el('input', 'st-sel-name');
+        name.id = 'st-sel-name';
+        name.value = m.label || '';
+        name.maxLength = SHORT_MAX;
+        name.placeholder = '名字，比如颈线';
+        name.setAttribute('aria-label', '水平线的名字');
+        name.addEventListener('input', () => {
+          const cur = card();
+          if (!cur || !pageMarks(cur)[local.selected]) return;
+          const next = pageMarks(cur).map((x, i) => (i === local.selected ? { ...x, label: name.value } : x));
+          const ps = cardPages(cur);
+          if (ps.length) { ps[pageAt(cur)] = { ...ps[pageAt(cur)], marks: next }; savePages(ps); } else update({ marks: next });
+          const svg = svgNow();
+          if (svg) drawMarks(svg, next, local.selected, { edit: true });
+        });
+        bar.appendChild(name);
+      }
+      const del = button('btn small', '删除');
+      del.addEventListener('click', deleteSelected);
+      bar.appendChild(del);
+      const off = button('btn small', '取消选中');
+      off.addEventListener('click', () => { local.selected = -1; refreshSelection(); });
+      bar.appendChild(off);
+      return bar;
+    }
+
+    /**
+     * 图上的鼠标、手指：点已有的批注 = 选中它（按住拖动换位置，拖小方块改大小）；点空白处按当前工具画新的。
+     * 已经选中一个时，点空白处（包括别的细线外面那圈看不见的感应区）只是取消选中。
+     * 拖动时只重画这张图，松手才存一次（存一次就是撤销一步）。
+     */
     function bindDraw(svg) {
-      let start = null;
-      let temp = null;
+      let drag = null;
       const pt = (e) => {
         const p = svg.createSVGPoint();
         p.x = e.clientX;
@@ -1195,51 +1327,103 @@ export function mountStudy(root, store, opts = {}) {
         const q = p.matrixTransform(svg.getScreenCTM().inverse());
         return { x: Math.max(0, Math.min(MARK_W, q.x)), y: Math.max(0, Math.min(MARK_H, q.y)) };
       };
+      const redraw = (marks) => drawMarks(svg, marks, local.selected, { edit: true });
+      const noteSel = (m) => (m && m.t === 'pin' ? '#st-note-' + m.n : null);
       svg.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         e.preventDefault(); // 不让点图把焦点从右边的说明框抢走
         const c = card();
         if (!c) return;
+        const marks = pageMarks(c);
         const p = pt(e);
-        if (local.tool === 'select') {
-          const g = e.target.closest && e.target.closest('g[data-i]');
-          local.selected = g ? Number(g.getAttribute('data-i')) : -1;
-          paint();
+        const t = e.target;
+        const h = t && t.getAttribute ? t.getAttribute('data-h') : null;
+        const g = t && t.closest ? t.closest('g[data-i]') : null;
+        const gi = g ? Number(g.getAttribute('data-i')) : -1;
+        const band = !!(t && t.hasAttribute && t.hasAttribute('data-band'));
+        const copy = marks.map((m) => ({ ...m }));
+        const start = { p0: p, x0: e.clientX, y0: e.clientY, marks: copy, moved: false };
+        if (h && marks[local.selected]) {
+          drag = { ...start, kind: 'handle', h, o: { ...marks[local.selected] } };
+        } else if (gi >= 0 && !(band && local.selected >= 0 && gi !== local.selected)) {
+          local.selected = gi;
+          drag = { ...start, kind: 'move', o: { ...marks[gi] } };
+          redraw(copy);
+        } else if (local.selected >= 0) {
+          local.selected = -1; // 已经选中了一个：点空白处只是取消选中
+          refreshSelection();
           return;
-        }
-        if (local.tool === 'pin') {
+        } else if (local.tool === 'pin') {
           snapshot();
-          const marks = pageMarks(c);
           const n = pinsBefore(c) + marks.filter((m) => m.t === 'pin').length + 1;
+          local.selected = marks.length;
           setMarks([...marks, { t: 'pin', n: 999, x: p.x, y: p.y, c: local.color }], [...c.notes, { n: 999, text: '' }], '#st-note-' + n);
           return;
-        }
-        if (local.tool === 'hline') {
+        } else if (local.tool === 'hline') {
           snapshot();
-          const marks = pageMarks(c);
-          setMarks([...marks, { t: 'hline', y: p.y, c: local.color, label: '' }], null, '#st-line-' + marks.length);
+          local.selected = marks.length;
+          setMarks([...marks, { t: 'hline', y: p.y, c: local.color, label: '' }], null, '#st-sel-name');
           return;
+        } else {
+          const m = local.tool === 'rect'
+            ? { t: 'rect', x: p.x, y: p.y, w: 0, h: 0, c: local.color }
+            : { t: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y, c: local.color };
+          copy.push(m);
+          local.selected = copy.length - 1;
+          drag = { ...start, kind: 'handle', h: m.t === 'rect' ? 'se' : 'p2', o: { ...m }, fresh: true, moved: true };
         }
-        start = p;
-        svg.setPointerCapture(e.pointerId);
+        try { svg.setPointerCapture(e.pointerId); } catch { /* 没有也能拖 */ }
       });
       svg.addEventListener('pointermove', (e) => {
-        if (!start) return;
-        const c = card();
-        if (!c) return;
+        if (!drag) return;
+        if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return; // 手抖一下不算拖
+        drag.moved = true;
         const p = pt(e);
-        temp = local.tool === 'rect'
-          ? { t: 'rect', x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y), c: local.color }
-          : { t: 'arrow', x1: start.x, y1: start.y, x2: p.x, y2: p.y, c: local.color };
-        drawMarks(svg, [...pageMarks(c), temp]);
+        const dx = p.x - drag.p0.x;
+        const dy = p.y - drag.p0.y;
+        const o = drag.o;
+        const m = { ...o };
+        if (drag.kind === 'move') {
+          if (m.t === 'pin' || m.t === 'rect') { m.x = o.x + dx; m.y = o.y + dy; }
+          if (m.t === 'arrow') { m.x1 = o.x1 + dx; m.y1 = o.y1 + dy; m.x2 = o.x2 + dx; m.y2 = o.y2 + dy; }
+          if (m.t === 'hline') m.y = o.y + dy;
+        } else if (m.t === 'rect') {
+          let x1 = o.x;
+          let y1 = o.y;
+          let x2 = o.x + o.w;
+          let y2 = o.y + o.h;
+          if (drag.h.includes('w')) x1 += dx;
+          if (drag.h.includes('e')) x2 += dx;
+          if (drag.h.includes('n')) y1 += dy;
+          if (drag.h.includes('s')) y2 += dy;
+          m.x = Math.min(x1, x2); m.y = Math.min(y1, y2); m.w = Math.abs(x2 - x1); m.h = Math.abs(y2 - y1);
+        } else if (m.t === 'arrow') {
+          if (drag.h === 'p1') { m.x1 = o.x1 + dx; m.y1 = o.y1 + dy; } else { m.x2 = o.x2 + dx; m.y2 = o.y2 + dy; }
+        } else if (m.t === 'pin') {
+          m.s = Math.max(MARK_SIZE_MIN, Math.min(MARK_SIZE_MAX, (o.s || 1) * (1 + (dx + dy) / 80)));
+        } else if (m.t === 'hline') {
+          m.y = o.y + dy;
+        }
+        drag.marks[local.selected] = m;
+        redraw(drag.marks);
       });
       const end = () => {
-        if (!start) return;
-        start = null;
-        const c = card();
-        const ok = temp && (temp.t === 'rect' ? temp.w > 8 && temp.h > 8 : Math.hypot(temp.x2 - temp.x1, temp.y2 - temp.y1) > 20);
-        if (c && ok) { snapshot(); setMarks([...pageMarks(c), temp]); } else paint();
-        temp = null;
+        if (!drag) return;
+        const d = drag;
+        drag = null;
+        const m = d.marks[local.selected];
+        if (d.fresh) {
+          const ok = m && (m.t === 'rect' ? m.w > 8 && m.h > 8 : Math.hypot(m.x2 - m.x1, m.y2 - m.y1) > 20);
+          if (!ok) { local.selected = -1; refreshSelection(); return; }
+          snapshot();
+          setMarks(d.marks);
+          return;
+        }
+        if (d.moved) { snapshot(); setMarks(d.marks, null, noteSel(m)); return; }
+        refreshSelection(); // 只是点了一下：选中它
+        const f = noteSel(m);
+        const ta = f && dlg.querySelector(f);
+        if (ta) ta.focus({ preventScroll: true });
       };
       svg.addEventListener('pointerup', end);
       svg.addEventListener('pointercancel', end);
@@ -1293,8 +1477,12 @@ export function mountStudy(root, store, opts = {}) {
           lastPage = pi;
         }
         const row = el('div', 'st-pin-note');
-        const dot = el('span', 'st-dot', String(n.n));
+        row.dataset.n = String(n.n);
+        const selM = pageMarks(c)[local.selected];
+        if (selM && selM.t === 'pin' && selM.n === n.n) row.classList.add('on');
+        const dot = button('st-dot', String(n.n), `在图上选中编号 ${n.n}`);
         dot.style.background = pinColor(c, n.n);
+        dot.addEventListener('click', () => selectPin(n.n, true));
         row.appendChild(dot);
         const ta = el('textarea');
         ta.id = 'st-note-' + n.n;
@@ -1304,6 +1492,11 @@ export function mountStudy(root, store, opts = {}) {
         ta.placeholder = `编号 ${n.n} 想说什么`;
         ta.readOnly = !editable();
         ta.setAttribute('aria-label', `编号 ${n.n} 的说明`);
+        ta.addEventListener('focus', () => { // 写哪条说明，图上就选中哪个点
+          const cur = card();
+          const m = cur ? pageMarks(cur)[local.selected] : null;
+          if (editable() && !(m && m.t === 'pin' && m.n === n.n) && pinPages(cur).get(n.n) === pageAt(cur)) selectPin(n.n, false);
+        });
         ta.addEventListener('input', () => {
           const cur = card();
           if (!cur) return;
@@ -1322,21 +1515,6 @@ export function mountStudy(root, store, opts = {}) {
       nf.appendChild(el('span', null, '编号说明（和图上的编号点一一对应）'));
       nf.appendChild(notesBox);
       right.appendChild(nf);
-
-      pageMarks(c).forEach((m, i) => {
-        if (m.t !== 'hline') return;
-        const inp = textInput('st-line-' + i, m.label || '', (v) => {
-          const cur = card();
-          if (!cur || !pageMarks(cur)[i]) return;
-          const marks = pageMarks(cur).slice();
-          marks[i] = { ...marks[i], label: v };
-          const ps = cardPages(cur);
-          if (ps.length) { ps[pageAt(cur)] = { ...ps[pageAt(cur)], marks }; savePages(ps); } else update({ marks });
-          const svg = dlg.querySelector('.st-stage svg');
-          if (svg) drawMarks(svg, pageMarks(card()), local.selected);
-        }, { placeholder: '比如：颈线、前高' });
-        right.appendChild(field('水平线的名字', inp));
-      });
 
       const kind = el('div', 'st-kind-pick');
       kind.setAttribute('role', 'group');
@@ -1467,7 +1645,12 @@ export function mountStudy(root, store, opts = {}) {
       if (e.isComposing || e.keyCode === 229) return;
       if (document.querySelector('dialog[open]')) return; // 页内确认框开着
       if (e.target && e.target.id === 'st-ed-newname') return; // 正在起名字：Esc 只取消起名
-      if (e.key === 'Escape') { e.preventDefault(); closeEditor(); return; }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (local.selected >= 0) { local.selected = -1; refreshSelection(); return; } // 先取消选中，再按一次才关
+        closeEditor();
+        return;
+      }
       if (isTyping(e.target)) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && local.selected >= 0) { e.preventDefault(); deleteSelected(); return; }
       if (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && local.undo.length) { e.preventDefault(); e.stopPropagation(); undoMarks(); }

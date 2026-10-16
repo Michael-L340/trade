@@ -20,12 +20,20 @@
 //   { t: 'arrow', x1, y1, x2, y2, c } 箭头
 //   { t: 'hline', y, c, label }       水平线（label 是线的名字，可以为空）
 //   { t: 'pin', n, x, y, c }          编号点，和 notes 里同一个 n 的说明对应
-// c 是颜色：'red' | 'blue' | 'amber' | 'green'。
+// c 是颜色：'red' | 'blue' | 'amber' | 'green'。可选的 s 是大小（0.5–2.5，没有就是 1：编号点的圆、线的粗细、
+// 箭头的头、水平线的名字一起按它放大缩小）；框、箭头、水平线可选 dash（true 虚线 / false 实线；没有时水平线是虚线，
+// 框和箭头是实线）。
 //
 // 图片和复盘截图放在同一个地方：shots/<卡片 id>/<图片 id>.webp（缩略图 .thumb.webp）；
 // 从复盘收进来的卡片直接引用那一笔的截图路径 shots/<交易 id>/<截图 id>.webp，不另存一份。
 
 export { STUDY_KEYS, TOPIC_KEYS, ITEM_KEYS, CARD_KEYS, IMG_KEYS, PAGE_KEYS } from './journal-format.js';
+
+/** 批注大小的范围 */
+export const MARK_SIZE_MIN = 0.5;
+export const MARK_SIZE_MAX = 2.5;
+/** 没写 dash 时是不是虚线：水平线默认虚线，框和箭头默认实线 */
+export const isDashed = (m) => (typeof m.dash === 'boolean' ? m.dash : m.t === 'hline');
 
 /** 批注画布的大小（16:9） */
 export const MARK_W = 1000;
@@ -195,8 +203,19 @@ const round1 = (v) => Math.round(v * 10) / 10;
 const px = (v) => round1(clamp(v, 0, MARK_W));
 const py = (v) => round1(clamp(v, 0, MARK_H));
 
-/** 一个批注：认识的形状、坐标在画布里（超出的拉回边上）、颜色认识；不合规返回 null */
+/** 一个批注：认识的形状、坐标在画布里（超出的拉回边上）、颜色认识；大小、虚线照留（大小拉回范围、等于 1 不写）。不合规返回 null */
 export function sanitizeMark(m) {
+  const out = sanitizeShape(m);
+  if (!out) return null;
+  if (isNum(m.s)) {
+    const s = Math.round(clamp(m.s, MARK_SIZE_MIN, MARK_SIZE_MAX) * 10) / 10;
+    if (s !== 1) out.s = s;
+  }
+  if (out.t !== 'pin' && typeof m.dash === 'boolean') out.dash = m.dash;
+  return out;
+}
+
+function sanitizeShape(m) {
   if (!isPlainObject(m)) return null;
   const c = MARK_COLORS.includes(m.c) ? m.c : 'red';
   switch (m.t) {

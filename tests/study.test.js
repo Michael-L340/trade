@@ -74,6 +74,15 @@ test('sanitizeMark：坐标拉回画布、负宽高的框翻正、颜色不认�
   for (const bad of [null, { t: 'pin', n: 0, x: 1, y: 1 }, { t: 'circle' }, { t: 'arrow', x1: NaN, y1: 0, x2: 0, y2: 0 }]) assert.equal(sanitizeMark(bad), null);
 });
 
+test('sanitizeMark：大小 s 拉回 0.5–2.5、一位小数、等于 1 不写；dash 只给框、箭头、水平线留', () => {
+  assert.deepEqual(sanitizeMark({ t: 'pin', n: 1, x: 1, y: 2, c: 'red', s: 1.84, dash: true }), { t: 'pin', n: 1, x: 1, y: 2, c: 'red', s: 1.8 });
+  assert.equal(sanitizeMark({ t: 'pin', n: 1, x: 1, y: 2, s: 9 }).s, 2.5);
+  assert.equal('s' in sanitizeMark({ t: 'pin', n: 1, x: 1, y: 2, s: 1 }), false);
+  assert.equal('s' in sanitizeMark({ t: 'pin', n: 1, x: 1, y: 2, s: '2' }), false);
+  assert.deepEqual(sanitizeMark({ t: 'hline', y: 5, c: 'blue', label: 'a', dash: false, s: 0.1 }), { t: 'hline', y: 5, c: 'blue', label: 'a', s: 0.5, dash: false });
+  assert.equal('dash' in sanitizeMark({ t: 'arrow', x1: 0, y1: 0, x2: 5, y2: 5, dash: 'yes' }), false);
+});
+
 test('renumberPins：编号按出现顺序从 1 起，说明跟着走；多余的说明去掉、缺的补空', () => {
   const marks = [{ t: 'pin', n: 3, x: 0, y: 0 }, { t: 'rect' }, { t: 'pin', n: 1, x: 0, y: 0 }, { t: 'pin', n: 7, x: 0, y: 0 }];
   const notes = [{ n: 1, text: '一' }, { n: 3, text: '三' }, { n: 9, text: '九' }];
