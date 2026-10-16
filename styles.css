@@ -605,6 +605,13 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 /* 一张卡好几张图：大图左下角写标签、右上角 2/3（对比框在右上时往下让）；下面一排小图点着换 */
 .st-cap { position: absolute; left: 6px; bottom: 6px; background: rgba(255, 255, 255, .94); color: #15203B; border: 1px solid #C3CADA; font-size: 12px; line-height: 18px; padding: 0 6px; pointer-events: none; }
 .st-count { position: absolute; right: 6px; bottom: 6px; background: rgba(21, 32, 59, .78); color: #FFFFFF; font: 600 11px/16px var(--font-num); padding: 0 5px; pointer-events: none; }
+/* 左右翻页：鼠标移到图上才出现（键盘移到上面也出现），触屏上一直显示但很淡 */
+.st-flip { position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 44px; padding: 0; border: 0; background: rgba(21, 32, 59, .55); color: #FFFFFF; font-size: 24px; line-height: 44px; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.st-flip.prev { left: 0; }
+.st-flip.next { right: 0; }
+.st-card:hover .st-flip, .st-flip:focus-visible { opacity: 1; }
+.st-flip:hover { background: rgba(21, 32, 59, .8); }
+@media (hover: none) { .st-flip { opacity: .6; } }
 .st-strip { display: flex; gap: 6px; padding: 6px 6px 0; min-width: 0; }
 .st-strip-btn { flex: 1 1 0; min-width: 0; border: 1px solid var(--line-2); background: var(--surface); padding: 0; display: grid; gap: 1px; font-size: 11px; color: var(--ink-2); cursor: pointer; }
 .st-strip-btn > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 3px; }

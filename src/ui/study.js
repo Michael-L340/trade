@@ -619,7 +619,7 @@ export function mountStudy(root, store, opts = {}) {
       cmp.appendChild(document.createTextNode('对比'));
       cmp.addEventListener('click', (e) => e.stopPropagation());
     }
-    // 好几张图：上面一张大图（左下角写标签、右上角 2/3），下面一排小图，点小图换大图（只换这张卡，不进数据）
+    // 好几张图：卡片上只放一张大图，右下角 1/3；鼠标移到图上左右出现 ‹ › 翻页（只换这张卡显示哪张，不进数据）
     const pages = cardPages(card);
     let k = view.shown.get(card.id) || 0;
     if (k >= pages.length) k = 0;
@@ -627,29 +627,20 @@ export function mountStudy(root, store, opts = {}) {
     if (pages.length > 1) {
       if (pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 没起标签就不写「第 n 张」
       extra.push(el('span', 'st-count', `${k + 1}/${pages.length}`));
-    }
-    art.appendChild(shotBox(card, { full: big, extra, page: k }));
-    if (pages.length > 1) {
-      const strip = el('div', 'st-strip');
-      strip.setAttribute('role', 'group');
-      strip.setAttribute('aria-label', '这张卡的几张图');
-      pages.forEach((p, i) => {
-        const b = button('st-strip-btn', null, `看${pageName(p, i)}`);
-        b.setAttribute('aria-pressed', String(i === k));
-        b.appendChild(shotBox(card, { page: i }));
-        if (p.img.label) b.appendChild(el('span', null, p.img.label));
+      for (const [d, cls, text, label] of [[-1, 'prev', '‹', '上一张图'], [1, 'next', '›', '下一张图']]) {
+        const b = button('st-flip ' + cls, text, label);
         b.addEventListener('click', (e) => {
           e.stopPropagation();
-          view.shown.set(card.id, i);
+          view.shown.set(card.id, (k + d + pages.length) % pages.length);
           const next = cardEl(card, { compact, big });
           art.replaceWith(next);
-          const again = next.querySelectorAll('.st-strip-btn')[i];
+          const again = next.querySelector('.st-flip.' + cls);
           if (again) again.focus({ preventScroll: true });
         });
-        strip.appendChild(b);
-      });
-      art.appendChild(strip);
+        extra.push(b);
+      }
     }
+    art.appendChild(shotBox(card, { full: big, extra, page: k }));
     const body = el('div', 'st-card-body');
     const tr = el('div', 'st-card-title');
     tr.appendChild(el('h3', null, card.title || '（还没写标题）'));
