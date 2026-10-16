@@ -609,6 +609,7 @@ export function mountStudy(root, store, opts = {}) {
       const box = el('input');
       box.type = 'checkbox';
       box.checked = view.compare.has(card.id);
+      if (box.checked) cmp.classList.add('on');
       box.setAttribute('aria-label', '加入对比');
       box.addEventListener('change', () => {
         if (box.checked && view.compare.size >= 4) { box.checked = false; showToast('最多同时对比 4 张'); return; }
@@ -625,7 +626,7 @@ export function mountStudy(root, store, opts = {}) {
     if (k >= pages.length) k = 0;
     const extra = [cmp];
     if (pages.length > 1) {
-      if (pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 没起标签就不写「第 n 张」
+      if (big && pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 对比里才写标签；没起标签不写「第 n 张」
       extra.push(el('span', 'st-count', `${k + 1}/${pages.length}`));
       for (const [d, cls, text, label] of [[-1, 'prev', '‹', '上一张图'], [1, 'next', '›', '下一张图']]) {
         const b = button('st-flip ' + cls, text, label);
@@ -641,11 +642,20 @@ export function mountStudy(root, store, opts = {}) {
       }
     }
     art.appendChild(shotBox(card, { full: big, extra, page: k }));
+    // 墙和分栏上的卡片只放 图 + 标题 + 结论，别的（正例/反例、知识点、品种周期、编号说明）点进去才看到；
+    // 对比（big）是拿来逐条比的，照旧全显示
     const body = el('div', 'st-card-body');
     const tr = el('div', 'st-card-title');
     tr.appendChild(el('h3', null, card.title || '（还没写标题）'));
-    tr.appendChild(el('span', 'st-kind ' + card.kind, KIND_TEXT[card.kind] || ''));
+    if (big) tr.appendChild(el('span', 'st-kind ' + card.kind, KIND_TEXT[card.kind] || ''));
     body.appendChild(tr);
+    if (!big) {
+      if (card.take) body.appendChild(el('p', 'st-take', card.take));
+      art.appendChild(body);
+      art.addEventListener('click', () => openCard(card.id));
+      art.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === art) openCard(card.id); });
+      return art;
+    }
     const tags = el('div', 'st-tags');
     const where = findItem(st(), card.item);
     if (where) tags.appendChild(el('b', null, where.item.name));

@@ -602,6 +602,10 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .st-shot-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 12px; }
 .st-cmp { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; gap: 4px; background: rgba(255, 255, 255, .94); color: var(--ink); border: 1px solid var(--line-2); padding: 2px 8px 2px 6px; font-size: 12px; cursor: pointer; }
 .st-cmp input { margin: 0; }
+/* 墙上的「对比」平时藏起来，鼠标移到卡片上（或已勾上、键盘移到上面）才出现；触屏上一直显示 */
+.st-wall .st-cmp, .st-cols .st-cmp { opacity: 0; transition: opacity .12s; }
+.st-wall .st-card:hover .st-cmp, .st-cols .st-card:hover .st-cmp, .st-cmp.on, .st-cmp:focus-within { opacity: 1; }
+@media (hover: none) { .st-wall .st-cmp, .st-cols .st-cmp { opacity: 1; } }
 /* 一张卡好几张图：大图左下角写标签、右上角 2/3（对比框在右上时往下让）；下面一排小图点着换 */
 .st-cap { position: absolute; left: 6px; bottom: 6px; background: rgba(255, 255, 255, .94); color: #15203B; border: 1px solid #C3CADA; font-size: 12px; line-height: 18px; padding: 0 6px; pointer-events: none; }
 .st-count { position: absolute; right: 6px; bottom: 6px; background: rgba(21, 32, 59, .78); color: #FFFFFF; font: 600 11px/16px var(--font-num); padding: 0 5px; pointer-events: none; }
