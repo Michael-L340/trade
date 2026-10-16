@@ -16,8 +16,8 @@ export const SHOT_KEYS = Object.freeze(['id', 'label', 'file', 'thumb', 'width',
 export const STUDY_KEYS = Object.freeze(['topics', 'cards']);
 export const TOPIC_KEYS = Object.freeze(['id', 'name', 'items', 'createdAt']);
 export const ITEM_KEYS = Object.freeze(['id', 'name', 'note']);
-export const CARD_KEYS = Object.freeze(['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'more', 'notes', 'createdAt', 'updatedAt']);
-export const IMG_KEYS = Object.freeze(['file', 'thumb', 'width', 'height', 'bytes', 'label', 'note']);
+export const CARD_KEYS = Object.freeze(['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'memo', 'img', 'marks', 'more', 'notes', 'createdAt', 'updatedAt']);
+export const IMG_KEYS = Object.freeze(['file', 'thumb', 'width', 'height', 'bytes', 'label']);
 export const PAGE_KEYS = Object.freeze(['img', 'marks']);
 
 /** @param {unknown} v */

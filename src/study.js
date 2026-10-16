@@ -5,12 +5,13 @@
 //   topics: [{ id: 'tp_…', name, items: [{ id: 'kp_…', name, note }] }],   主题 → 知识点；note 是知识点的「要点」
 //   cards:  [{ id: 'c_…', item: 'kp_…' 或 ''（未归类）, title, kind: 'good'|'bad', symbol, tf, source,
 //             trade: 't_…' 或 null（从复盘收进来的那一笔）, take（一句话结论）,
-//             img: null 或 { file, thumb?, width?, height?, bytes?, label?, note? }, marks: [批注],
+//             memo?（整张卡的批注，编辑框右边写，可以没有）,
+//             img: null 或 { file, thumb?, width?, height?, bytes?, label? }, marks: [批注],
 //             more?: [{ img: {同上}, marks: [批注] }]（第 2 张起的图，按顺序；没有就不写这个键），
 //             notes: [{ n, text }], createdAt, updatedAt }]
 // }
 // 一张卡可以有好几张图：第一张是 img + marks（和只有一张图时完全一样，旧数据不用改），后面的放在 more 里。
-// img.label 是这张图的标签（开仓时 / 持仓中 / 平仓后 / 自己写的字），img.note 是这张图自己的批注（编辑框右边写），都可以没有。编号点在整张卡里连着编：
+// img.label 是这张图的标签（开仓时 / 持仓中 / 平仓后 / 自己写的字），可以没有。编号点在整张卡里连着编：
 // 第一张的编号点在前，然后是 more 里一张一张往后排；notes 只有一份，和这些编号点一一对应。
 // 卡片在数组里的先后就是显示的先后（新卡放最前面）。知识点被删掉后，引用它的卡片不会悬空：删知识点时一起删掉
 // （可以撤销）；读到别处来的、item 指向不存在知识点的卡片，界面当成「未归类」显示。
@@ -129,6 +130,7 @@ export function validateStudy(study) {
         if (typeof c[f] !== 'string') bad(c.id, `${what}的 ${f} 必须是字符串`);
       }
       if (!KINDS.includes(c.kind)) bad(c.id, what + '的 kind 必须是 "good" 或 "bad"');
+      if (c.memo !== undefined && typeof c.memo !== 'string') bad(c.id, what + '的批注（memo）必须是字符串');
       if (c.trade !== null && typeof c.trade !== 'string') bad(c.id, what + '的 trade 必须是交易 id 或 null');
       const checkImg = (img, w) => {
         if (!isPlainObject(img)) { bad(c.id, w + '必须是对象'); return; }
@@ -138,7 +140,6 @@ export function validateStudy(study) {
           if (img[f] !== undefined && !(isNum(img[f]) && img[f] >= 0)) bad(c.id, `${w}的 ${f} 必须是不小于 0 的数字`);
         }
         if (img.label !== undefined && typeof img.label !== 'string') bad(c.id, w + '的标签必须是字符串');
-        if (img.note !== undefined && typeof img.note !== 'string') bad(c.id, w + '的批注必须是字符串');
       };
       const checkMarks = (marks, w) => {
         if (!Array.isArray(marks)) bad(c.id, w + '的 marks（批注）必须是数组');
@@ -178,13 +179,7 @@ export function cleanStudy(study) {
     items: tp.items.map((it) => ({ ...it, name: clean(it.name), note: clean(it.note) })),
   }));
   const cleanMarks = (marks) => marks.map((m) => (typeof m.label === 'string' ? { ...m, label: clean(m.label) } : m));
-  const cleanImg = (img) => {
-    if (!isPlainObject(img)) return img;
-    const out = { ...img };
-    if (typeof img.label === 'string') out.label = clean(img.label);
-    if (typeof img.note === 'string') out.note = clean(img.note);
-    return out;
-  };
+  const cleanImg = (img) => (isPlainObject(img) && typeof img.label === 'string' ? { ...img, label: clean(img.label) } : img);
   out.cards = (Array.isArray(study.cards) ? study.cards : []).map((c) => {
     const card = {
       ...c,
@@ -193,6 +188,7 @@ export function cleanStudy(study) {
       marks: cleanMarks(c.marks),
       notes: c.notes.map((n) => ({ ...n, text: clean(n.text) })),
     };
+    if (typeof c.memo === 'string') card.memo = clean(c.memo);
     if (Array.isArray(c.more)) card.more = c.more.map((p) => ({ ...p, img: cleanImg(p.img), marks: cleanMarks(p.marks) }));
     return card;
   });
@@ -275,7 +271,7 @@ export function renumberPins(marks, notes) {
 
 const sanitizeMarks = (list) => list.map(sanitizeMark).filter(Boolean).slice(0, MAX_MARKS);
 
-/** 一张图：路径合规（缩略图可以没有），尺寸是数字，标签截到 SHORT_MAX 个字、批注截到 LONG_MAX 个字（空的不写）。不合规返回 undefined */
+/** 一张图：路径合规（缩略图可以没有），尺寸是数字，标签截到 SHORT_MAX 个字（空的不写）。不合规返回 undefined */
 export function sanitizeImg(v) {
   if (!isPlainObject(v) || !isImgPath(v.file) || (v.thumb !== undefined && !isImgPath(v.thumb))) return undefined;
   const img = { file: v.file };
@@ -283,8 +279,6 @@ export function sanitizeImg(v) {
   for (const f of ['width', 'height', 'bytes']) if (isNum(v[f]) && v[f] >= 0) img[f] = v[f];
   const label = typeof v.label === 'string' ? cut(v.label.replace(/\s+/g, ' ').trim(), SHORT_MAX) : '';
   if (label) img.label = label;
-  const note = typeof v.note === 'string' ? cut(v.note, LONG_MAX) : '';
-  if (note.trim()) img.note = note;
   return img;
 }
 
@@ -307,7 +301,8 @@ export function sanitizeCardPatch(fields) {
         if (typeof v === 'string') patch[key] = cut(v, SHORT_MAX); else rejected.push(key);
         break;
       case 'take':
-        if (typeof v === 'string') patch.take = cut(v, LONG_MAX); else rejected.push(key);
+      case 'memo':
+        if (typeof v === 'string') patch[key] = cut(v, LONG_MAX); else rejected.push(key);
         break;
       case 'item':
         if (v === '' || (typeof v === 'string' && v.startsWith('kp_') && ID_PATTERN.test(v))) patch.item = v; else rejected.push(key);

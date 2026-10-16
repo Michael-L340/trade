@@ -656,6 +656,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .st-tags b { font-weight: 500; color: var(--ink-2); }
 .st-trade-link { border: 0; background: transparent; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer; text-decoration: underline; }
 .st-take { font-weight: 700; font-size: 14px; line-height: 1.5; border-left: 3px solid var(--accent); padding-left: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.st-memo { margin: 0; font-size: 13px; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .st-notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 13px; color: var(--ink-2); }
 .st-notes li { display: grid; grid-template-columns: 20px 1fr; gap: 6px; align-items: start; }
 .st-notes li span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }

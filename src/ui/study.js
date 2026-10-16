@@ -255,7 +255,7 @@ export function mountStudy(root, store, opts = {}) {
     const q = view.q.trim().toLowerCase();
     if (!q) return true;
     const where = findItem(st(), c.item);
-    return [c.title, c.take, c.symbol, c.tf, c.source, where ? where.item.name : '', where ? where.item.note : '', where ? where.topic.name : '', ...c.notes.map((n) => n.text)]
+    return [c.title, c.take, c.memo || '', c.symbol, c.tf, c.source, where ? where.item.name : '', where ? where.item.note : '', where ? where.topic.name : '', ...c.notes.map((n) => n.text)]
       .join(' ').toLowerCase().includes(q);
   }
   const countItem = (id) => st().cards.filter((c) => c.item === id).length;
@@ -669,6 +669,7 @@ export function mountStudy(root, store, opts = {}) {
     }
     if (tags.childNodes.length) body.appendChild(tags);
     if (card.take) body.appendChild(el('p', 'st-take', card.take));
+    if (card.memo) body.appendChild(el('p', 'st-memo', card.memo));
     const notes = card.notes.filter((n) => n.text);
     if (notes.length) {
       const ol = el('ol', 'st-notes');
@@ -1576,37 +1577,29 @@ export function mountStudy(root, store, opts = {}) {
       take.placeholder = '这张图最想记住的一句话';
       take.readOnly = !editable();
       take.addEventListener('input', () => update({ take: take.value }));
-      right.appendChild(field('一句话结论（整张卡的，墙上会显示）', take));
+      right.appendChild(field('一句话结论（墙上会显示）', take));
 
-      // 这张图自己的批注：切到哪张图，这里就是哪张的
-      const pages = cardPages(c);
-      const curPage = pages[pageAt(c)];
-      if (curPage) {
-        const pn = el('textarea');
-        pn.id = 'st-pg-note';
-        pn.rows = 4;
-        pn.maxLength = LONG_MAX;
-        pn.value = curPage.img.note || '';
-        pn.placeholder = '这张图想记下什么，写在这里';
-        pn.readOnly = !editable();
-        pn.addEventListener('input', () => {
-          const cur = card();
-          if (!cur) return;
-          const ps = cardPages(cur);
-          const i = pageAt(cur);
-          if (!ps[i]) return;
-          ps[i] = { ...ps[i], img: { ...ps[i].img, note: pn.value } };
-          savePages(ps);
-        });
-        right.appendChild(field(pages.length > 1 ? `批注（${pageName(curPage, pageAt(c))}）` : '批注', pn));
-      }
+      // 整张卡的批注：切到哪张图都是这一份
+      const memo = el('textarea');
+      memo.id = 'st-ed-memo';
+      memo.rows = 6;
+      memo.maxLength = LONG_MAX;
+      memo.value = c.memo || '';
+      memo.placeholder = '这张卡想记下的东西，写在这里（切到哪张图都是这一份）';
+      memo.readOnly = !editable();
+      memo.addEventListener('input', () => update({ memo: memo.value }));
+      right.appendChild(field('批注', memo));
 
       const notesBox = el('div', 'st-pin-notes');
+      const pages = cardPages(c);
       const pinAt = pinPages(c);
-      const here = pages.length ? pageAt(c) : -1;
+      let lastPage = -1;
       for (const n of c.notes) {
         const pi = pinAt.has(n.n) ? pinAt.get(n.n) : -1;
-        if (here >= 0 && pi !== here) continue; // 只列这张图上的编号点
+        if (pages.length > 1 && pi >= 0 && pi !== lastPage) {
+          notesBox.appendChild(el('div', 'st-notes-grp', pageName(pages[pi], pi)));
+          lastPage = pi;
+        }
         const row = el('div', 'st-pin-note');
         row.dataset.n = String(n.n);
         const selM = pageMarks(c)[local.selected];
@@ -1641,9 +1634,9 @@ export function mountStudy(root, store, opts = {}) {
         }
         notesBox.appendChild(row);
       }
-      if (!notesBox.childNodes.length) notesBox.appendChild(el('p', 'st-hint', c.img ? '这张图上还没有编号点。点「编号点」再在图上点一下。' : '放了图以后，可以在图上放编号点，对应这里的说明。'));
+      if (!c.notes.length) notesBox.appendChild(el('p', 'st-hint', c.img ? '还没有编号点。点「编号点」再在图上点一下。' : '放了图以后，可以在图上放编号点，对应这里的说明。'));
       const nf = el('div', 'st-field');
-      nf.appendChild(el('span', null, pages.length > 1 ? '编号说明（这张图上的）' : '编号说明（和图上的编号点一一对应）'));
+      nf.appendChild(el('span', null, '编号说明（和图上的编号点一一对应）'));
       nf.appendChild(notesBox);
       right.appendChild(nf);
 
