@@ -22,7 +22,7 @@ import { parseNumber, todayLocal } from './format.js';
 import {
   newSystemRow, newTrade, normalizeJournal, emptyJournal, sanitizeTradePatch, sanitizeSystemPatch, cleanText, isoNow, newId,
 } from './model.js';
-import { cleanName, emptyStudy, LONG_MAX, renumberPins, sanitizeCardPatch } from './study.js';
+import { cleanName, emptyStudy, LONG_MAX, renumberAll, sanitizeCardPatch } from './study.js';
 
 function deepFreeze(v) {
   if (v !== null && typeof v === 'object' && !Object.isFrozen(v)) {
@@ -71,6 +71,18 @@ export function emptyRowDefaults(journal, now = new Date()) {
  *   由调用方提示用户（NEWER_SCHEMA 时可以用 createStore(null, { readOnly: 'newer-schema' }) 进入只读）。
  * @param {{now?: () => Date, readOnly?: string|null}} [opts]
  */
+/**
+ * 学习卡的编号点连着重新编号：old 是原卡片，clean 是这次的修改（缺的按原卡片补）。
+ * 没有图（img 为 null）时第 2 张起的图也一起去掉。返回 { marks, more, notes }。
+ */
+function renumberCard(old, clean) {
+  const img = 'img' in clean ? clean.img : old.img;
+  const marks = clean.marks || old.marks || [];
+  const more = img ? (clean.more || old.more || []) : [];
+  const r = renumberAll([marks, ...more.map((p) => p.marks)], clean.notes || old.notes || []);
+  return { marks: r.lists[0], more: more.map((p, i) => ({ ...p, marks: r.lists[i + 1] })), notes: r.notes };
+}
+
 export function createStore(initial, opts = {}) {
   const now = typeof opts.now === 'function' ? opts.now : () => new Date();
 
@@ -485,7 +497,8 @@ export function createStore(initial, opts = {}) {
       };
       Object.assign(card, clean);
       if (card.item && !itemIndex(card.item)) card.item = '';
-      Object.assign(card, renumberPins(card.marks, card.notes));
+      Object.assign(card, renumberCard(card, {}));
+      if (!card.img || !card.more || !card.more.length) delete card.more;
       const cur = study();
       commitStudy({ ...cur, cards: [card, ...cur.cards] }, { ids: [card.id], reason: 'addCard' });
       return card.id;
@@ -503,11 +516,14 @@ export function createStore(initial, opts = {}) {
       const old = cur.cards[i];
       const clean = sanitizeCardPatch(patch).patch;
       if (clean.item && !itemIndex(clean.item)) delete clean.item;
-      if ('marks' in clean || 'notes' in clean) Object.assign(clean, renumberPins(clean.marks || old.marks, clean.notes || old.notes));
-      const fields = Object.keys(clean).filter((k) => !sameValue(old[k], clean[k]) && JSON.stringify(old[k]) !== JSON.stringify(clean[k]));
+      if ('marks' in clean || 'notes' in clean || 'more' in clean || clean.img === null) Object.assign(clean, renumberCard(old, clean));
+      const moreOf = (c) => JSON.stringify(c.more || []);
+      const fields = Object.keys(clean).filter((k) => (k === 'more' ? moreOf(old) !== moreOf(clean)
+        : !sameValue(old[k], clean[k]) && JSON.stringify(old[k]) !== JSON.stringify(clean[k])));
       if (!fields.length) return false;
       const next = { ...old };
       for (const k of fields) next[k] = clean[k];
+      if (!next.img || !next.more || !next.more.length) delete next.more; // 没有第 2 张起的图就不写这个键
       next.updatedAt = isoNow(now());
       const cards = cur.cards.slice();
       cards[i] = next;

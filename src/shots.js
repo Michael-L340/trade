@@ -23,7 +23,7 @@
 import { processImage as defaultProcessImage } from './images.js';
 import { deriveTrade } from './calc.js';
 import { cleanText, isoNow, newId } from './model.js';
-import { cardFiles, studyFiles } from './study.js';
+import { cardFiles, cardPages, MAX_PAGES, pagesPatch, studyFiles } from './study.js';
 
 /** 截图标签的四种固定取值（第 5 节）：开仓时、持仓中、平仓后、不显示。也可以是用户自己打的字（normalizeLabel） */
 export const LABELS = Object.freeze(['open', 'hold', 'close', '']);
@@ -459,16 +459,23 @@ export function setShotLabel(ctx, tradeId, shotId, text) {
 // ---------- 学习卡的图 ----------
 
 /**
- * 给学习卡放一张图（换图也走这里）：压缩 → 写两个文件 shots/<卡片 id>/<图片 id>.webp 和 .thumb.webp →
- * 改卡片的 img。原来的图如果别处（交易截图、别的卡片）不再引用，就删掉它的本机文件。
+ * 给学习卡放一张图（换图、加图都走这里）：压缩 → 写两个文件 shots/<卡片 id>/<图片 id>.webp 和 .thumb.webp →
+ * 改卡片的图。opts.page 是数字时换掉第几张（从 0 数，标签留着）；是 'new' 时加在最后。
+ * 不传时：卡片还没有图就放成第一张，有图就换第一张（以前一张卡只有一张图时的做法）。
+ * 被换掉的图如果别处（交易截图、别的卡片）不再引用，就删掉它的本机文件。
  * 换了图，原来画的批注留着（坐标是按 16:9 画布算的，用户自己决定要不要清掉）。
- * @returns {Promise<object>} 新的 img
+ * @param {{page?: number|'new'}} [opts]
+ * @returns {Promise<object>} 新的图
  *   出错时抛 ShotError、ImageError 或 StorageError（message 可以直接给用户看）；不会留下元数据。
  */
-export async function addStudyImage(ctx, cardId, blob) {
+export async function addStudyImage(ctx, cardId, blob, opts = {}) {
   const c = context(ctx);
   if (!canEdit(c)) throw readOnlyError();
   if (!findCard(c, cardId)) throw new ShotError('NO_TRADE', '找不到这张学习卡，图没有保存');
+  const page = opts && (opts.page === 'new' || (Number.isInteger(opts.page) && opts.page >= 0)) ? opts.page : 0;
+  if (page === 'new' && cardPages(findCard(c, cardId)).length >= MAX_PAGES) {
+    throw new ShotError('TOO_MANY', `一张学习卡最多放 ${MAX_PAGES} 张图`);
+  }
   const demo = isDemo(c);
   if (!demo) needDb(c);
 
@@ -496,9 +503,18 @@ export async function addStudyImage(ctx, cardId, blob) {
   ]);
   try {
     stillOk();
-    const old = cardFiles(findCard(c, cardId));
+    const card = findCard(c, cardId);
+    const old = cardFiles(card);
+    const pages = cardPages(card).slice();
     const next = { file: paths.file, thumb: paths.thumb, width: img.width, height: img.height, bytes: img.bytes };
-    if (!c.store.actions.updateCard(cardId, { img: next })) throw new ShotError('NO_TRADE', '这张学习卡现在改不了，图没有保存');
+    if (page === 'new' || page >= pages.length) {
+      if (pages.length >= MAX_PAGES) throw new ShotError('TOO_MANY', `一张学习卡最多放 ${MAX_PAGES} 张图`);
+      pages.push({ img: next, marks: [] });
+    } else {
+      if (pages[page].img.label) next.label = pages[page].img.label;
+      pages[page] = { ...pages[page], img: next };
+    }
+    if (!c.store.actions.updateCard(cardId, pagesPatch(pages))) throw new ShotError('NO_TRADE', '这张学习卡现在改不了，图没有保存');
     const stillUsed = referencedPaths(c);
     await removeRecords(c, demo, old.filter((p) => !stillUsed.has(p)));
     return next;

@@ -23,9 +23,10 @@ import { APP_VERSION, SCHEMA_VERSION, versionGuard } from './model.js';
 import { claimWriter, connectStore, openLocalDb, requestPersist } from './store/localdb.js';
 import { mountSummary } from './ui/summary.js';
 import { mountChart } from './ui/chart.js';
-import { mountSheet, readOnlyMessage } from './ui/sheet.js';
+import { hasShotLabel, mountSheet, readOnlyMessage, shotLabelText } from './ui/sheet.js';
 import { mountDetail } from './ui/detail.js';
 import { mountStudy } from './ui/study.js';
+import { cardFiles } from './study.js';
 import * as Shots from './shots.js';
 import { downloadText, exportCsv, JSON_MIME, mountSettings } from './ui/settings.js';
 import { showToast } from './ui/toast.js';
@@ -197,17 +198,28 @@ async function boot() {
       queueMicrotask(() => detail.open(tradeId));
     },
   });
-  /** 复盘详情里某张截图「收进学习」：去学习页，用这张截图新建一张学习卡（直接引用这张截图，不另存一份） */
-  function toStudy(tradeId, shot) {
+  /**
+   * 复盘详情里勾了几张截图「收进学习」：去学习页，用这几张新建一张学习卡（按顺序放，标签跟着带过去；
+   * 直接引用这几张截图，不另存一份）
+   */
+  function toStudy(tradeId, list) {
     const it = store.get().derived.tradeById.get(tradeId);
-    if (!it || !shot) return;
+    const picked = (Array.isArray(list) ? list : [list]).filter((s) => s && (s.file || s.thumb));
+    if (!it || !picked.length) return;
     detail.close();
     location.hash = '#/study';
-    const img = { file: shot.file || shot.thumb };
-    if (shot.thumb) img.thumb = shot.thumb;
-    for (const f of ['width', 'height', 'bytes']) if (typeof shot[f] === 'number') img[f] = shot[f];
-    const id = study.newCard({ trade: tradeId, img, symbol: it.t.symbol || '', kind: it.d.outcome === 'loss' ? 'bad' : 'good', source: '自己的交易' });
-    if (id) showToast(`已把第 ${it.no} 笔的截图收进学习，接着画批注、写结论`);
+    const imgs = picked.map((shot) => {
+      const img = { file: shot.file || shot.thumb };
+      if (shot.thumb) img.thumb = shot.thumb;
+      for (const f of ['width', 'height', 'bytes']) if (typeof shot[f] === 'number') img[f] = shot[f];
+      if (hasShotLabel(shot.label)) img.label = shotLabelText(shot.label);
+      return img;
+    });
+    const id = study.newCard({
+      trade: tradeId, img: imgs[0], more: imgs.slice(1).map((img) => ({ img, marks: [] })),
+      symbol: it.t.symbol || '', kind: it.d.outcome === 'loss' ? 'bad' : 'good', source: '自己的交易',
+    });
+    if (id) showToast(`已把第 ${it.no} 笔的 ${imgs.length} 张截图收进同一张学习卡，接着画批注、写结论`);
   }
 
   const detail = mountDetail(els.detail, store, { shots, toStudy });
@@ -263,7 +275,7 @@ async function boot() {
   async function demoImages(json) {
     const cards = json && json.study && Array.isArray(json.study.cards) ? json.study.cards : [];
     const paths = [];
-    for (const c of cards) if (c && c.img) for (const p of [c.img.file, c.img.thumb]) if (p && !paths.includes(p)) paths.push(p);
+    for (const c of cards) for (const p of cardFiles(c)) if (!paths.includes(p)) paths.push(p);
     const got = await Promise.all(paths.map(async (p) => {
       try {
         const r = await fetch(new URL('../fixtures/study/' + p.split('/').pop(), import.meta.url));

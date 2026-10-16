@@ -5,6 +5,7 @@ import { createStore } from '../src/state.js';
 import { validateJournal, normalizeJournal, serialize, isoNow } from '../src/model.js';
 import {
   validateStudy, sanitizeMark, sanitizeCardPatch, renumberPins, cleanName, isImgPath, studyFiles, findItem, SHORT_MAX,
+  renumberAll, cardPages, pagesPatch, cardFiles, MAX_PAGES,
 } from '../src/study.js';
 
 const NOW = () => new Date(2026, 9, 14, 10, 0, 0);
@@ -207,6 +208,79 @@ test('studyFiles：卡片引用的大图和缩略图，去重', () => {
     { img: { file: 'shots/c_1/a.webp', thumb: 'shots/c_1/a.thumb.webp' } }, { img: null }, { img: { file: 'shots/c_1/a.webp' } },
   ] }), ['shots/c_1/a.webp', 'shots/c_1/a.thumb.webp']);
   assert.deepEqual(studyFiles(undefined), []);
+});
+
+// ---------- 一张卡好几张图（0.4.1） ----------
+
+const pin = (n, x = 10) => ({ t: 'pin', n, x, y: 10, c: 'red' });
+const IMG = (k, label) => ({ file: `shots/t_1/sh_${k}.webp`, thumb: `shots/t_1/sh_${k}.thumb.webp`, ...(label ? { label } : {}) });
+
+test('renumberAll：几张图的编号点连着编，第一张在前；说明跟着原来的号走', () => {
+  const r = renumberAll([[pin(2), pin(5)], [], [pin(1)]], [{ n: 1, text: '甲' }, { n: 2, text: '乙' }, { n: 9, text: '多余' }]);
+  assert.deepEqual(r.lists.map((l) => l.map((m) => m.n)), [[1, 2], [], [3]]);
+  assert.deepEqual(r.notes, [{ n: 1, text: '乙' }, { n: 2, text: '' }, { n: 3, text: '甲' }]);
+  assert.deepEqual(renumberPins([pin(3)], [{ n: 3, text: 'x' }]), { marks: [pin(1)], notes: [{ n: 1, text: 'x' }] }, '一张图时和以前一样');
+});
+
+test('cardPages / pagesPatch：第一张是 img + marks，后面是 more；没图是空的', () => {
+  const card = { img: IMG(1, '开仓时'), marks: [pin(1)], more: [{ img: IMG(2), marks: [] }, { img: null, marks: [] }] };
+  const pages = cardPages(card);
+  assert.equal(pages.length, 2, '坏的那张跳过');
+  assert.equal(pages[0].img.label, '开仓时');
+  assert.deepEqual(pagesPatch(pages), { img: card.img, marks: [pin(1)], more: [{ img: IMG(2), marks: [] }] });
+  assert.deepEqual(cardPages({ img: null, marks: [] }), []);
+  assert.deepEqual(pagesPatch([]), { img: null, marks: [], more: [] });
+  assert.deepEqual(cardFiles(card), ['shots/t_1/sh_1.webp', 'shots/t_1/sh_1.thumb.webp', 'shots/t_1/sh_2.webp', 'shots/t_1/sh_2.thumb.webp']);
+});
+
+test('sanitizeCardPatch：more 只留合规的图，最多 MAX_PAGES - 1 张；标签去空白、截长，空的不写', () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ img: IMG(i + 2), marks: [pin(1), { t: 'bad' }] }));
+  const { patch } = sanitizeCardPatch({ img: IMG(1, '  开仓  时 '), more: [{ img: { file: '../x' }, marks: [] }, 'x', ...many] });
+  assert.equal(patch.img.label, '开仓 时');
+  assert.equal(patch.more.length, MAX_PAGES - 1);
+  assert.deepEqual(patch.more[0].marks, [pin(1)], '坏批注丢掉');
+  assert.equal('label' in sanitizeCardPatch({ img: IMG(1, '   ') }).patch.img, false);
+  assert.deepEqual(sanitizeCardPatch({ more: 'x' }).rejected, ['more']);
+});
+
+test('validateStudy：more 结构不对要报；没有第一张图却有 more 也要报', () => {
+  const base = { id: 'c_1', item: '', title: '', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: IMG(1), marks: [], notes: [] };
+  assert.deepEqual(validateStudy({ cards: [{ ...base, more: [{ img: IMG(2, '持仓中'), marks: [pin(1)] }] }] }), []);
+  const msg = (more, extra = {}) => validateStudy({ cards: [{ ...base, ...extra, more }] }).map((e) => e.message).join('\n');
+  assert.match(msg('x'), /more/);
+  assert.match(msg([{ img: { file: 'x' }, marks: [] }]), /第 2 张图路径/);
+  assert.match(msg([{ img: IMG(2), marks: 'x' }]), /第 2 张图的 marks/);
+  assert.match(msg([{ img: IMG(2), marks: [] }], { img: null }), /没有第一张图/);
+  assert.match(msg([], { img: { ...IMG(1), label: 3 } }), /标签必须是字符串/);
+});
+
+test('学习卡几张图：新建时编号连着编；改了 more 重新编号；拿掉所有后加的图 more 键去掉；格式固定、读回一样', () => {
+  const { a, st, store } = setup();
+  const id = a.addCard({ img: IMG(1, '开仓时'), marks: [pin(7)], more: [{ img: IMG(2, '持仓中'), marks: [pin(3), pin(4)] }], notes: [{ n: 3, text: '持仓一' }, { n: 7, text: '开仓' }] });
+  let c = st().cards[0];
+  assert.deepEqual(c.marks.map((m) => m.n), [1]);
+  assert.deepEqual(c.more[0].marks.map((m) => m.n), [2, 3]);
+  assert.deepEqual(c.notes, [{ n: 1, text: '开仓' }, { n: 2, text: '持仓一' }, { n: 3, text: '' }]);
+  const text = serialize(store.get().journal);
+  assert.match(text, /"img":\{"file":"shots\/t_1\/sh_1.webp","thumb":"shots\/t_1\/sh_1.thumb.webp","label":"开仓时"\},"marks":\[[^\]]*\],"more":\[\{"img":\{/);
+  assert.equal(serialize(JSON.parse(text)), text);
+  assert.deepEqual(validateJournal(JSON.parse(text)), []);
+  // 两张图对调：编号跟着新顺序重排，说明跟着编号点走
+  const pages = cardPages(c);
+  assert.equal(a.updateCard(id, pagesPatch([pages[1], pages[0]])), true);
+  c = st().cards[0];
+  assert.equal(c.img.label, '持仓中');
+  assert.deepEqual(c.notes, [{ n: 1, text: '持仓一' }, { n: 2, text: '' }, { n: 3, text: '开仓' }]);
+  // 只留一张：more 键去掉
+  assert.equal(a.updateCard(id, pagesPatch([cardPages(c)[0]])), true);
+  c = st().cards[0];
+  assert.equal('more' in c, false);
+  assert.deepEqual(c.notes.map((n) => n.text), ['持仓一', '']);
+  assert.equal(a.updateCard(id, { more: [] }), false, '本来就没有 more，算没变');
+  assert.equal('more' in st().cards[0], false);
+  // 一张图的卡没有 more 键
+  a.addCard({ img: IMG(3) });
+  assert.equal('more' in st().cards[0], false);
 });
 
 test('示例数据 fixtures/demo-journal.json：交易和附录 A 一样，学习板块合规，示例图都在 fixtures/study/', async () => {

@@ -368,6 +368,9 @@ function studyDoc() {
       { id: 'c_1', item: 'kp_1', title: '自己画的', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: { file: 'shots/c_1/im_1.webp', thumb: 'shots/c_1/im_1.thumb.webp', bytes: 6 }, marks: [], notes: [] },
       { id: 'c_2', item: 'kp_1', title: '收进来的', kind: 'good', symbol: '', tf: '', source: '', trade: 't_1', take: '', img: { file: 'shots/t_1/sh_1.webp', thumb: 'shots/t_1/sh_1.thumb.webp' }, marks: [], notes: [] },
       { id: 'c_3', item: '', title: '只有文字', kind: 'bad', symbol: '', tf: '', source: '', trade: null, take: '规则', img: null, marks: [], notes: [] },
+      { id: 'c_4', item: '', title: '好几张图', kind: 'good', symbol: '', tf: '', source: '', trade: 't_1', take: '',
+        img: { file: 'shots/t_1/sh_1.webp', thumb: 'shots/t_1/sh_1.thumb.webp', label: '开仓时' }, marks: [],
+        more: [{ img: { file: 'shots/c_4/im_2.webp', thumb: 'shots/c_4/im_2.thumb.webp', bytes: 4, label: '平仓后' }, marks: [] }], notes: [] },
     ],
   };
   return doc;
@@ -382,11 +385,13 @@ test('学习板块：固定格式和网站一样；学习卡的图一起下载�
   const objects = {
     'shots/t_1/sh_1.webp': Buffer.alloc(10, 1), 'shots/t_1/sh_1.thumb.webp': Buffer.alloc(3, 2),
     'shots/c_1/im_1.webp': Buffer.alloc(6, 5), 'shots/c_1/im_1.thumb.webp': Buffer.alloc(2, 6),
+    'shots/c_4/im_2.webp': Buffer.alloc(4, 7), 'shots/c_4/im_2.thumb.webp': Buffer.alloc(2, 8),
   };
   const f = fakeFetch({ doc, objects });
   const r = await runBackup({ ...quiet, env: ENV, fetch: f, dir });
-  assert.equal(r.downloaded.length, 4);
-  assert.equal(storageCalls(f).length, 4, '交易截图只下一次');
+  assert.equal(r.downloaded.length, 6, '第 2 张起的图（more）也下载');
+  assert.equal(storageCalls(f).length, 6, '交易截图只下一次');
+  assert.deepEqual(await readFile(join(dir, 'shots/c_4/im_2.webp')), Buffer.alloc(4, 7));
   assert.deepEqual(await readFile(join(dir, 'shots/c_1/im_1.webp')), Buffer.alloc(6, 5));
   assert.deepEqual(r.missing, []);
 });
@@ -397,4 +402,7 @@ test('学习板块：图片路径想写到仓库外面、study 结构不对都�
   assert.match(validateDoc(doc).join('\n'), /第 1 张学习卡的图片路径/);
   assert.match(validateDoc({ ...makeDoc(1), study: [] }).join('\n'), /study 必须是对象/);
   assert.match(validateDoc({ ...makeDoc(1), study: { cards: [{ id: 'x' }] } }).join('\n'), /c_ 开头/);
+  const d2 = studyDoc();
+  d2.study.cards[3].more[0].img.file = 'shots/../x';
+  assert.match(validateDoc(d2).join('\n'), /第 4 张学习卡的第 2 张图路径/);
 });

@@ -16,8 +16,9 @@ export const SHOT_KEYS = Object.freeze(['id', 'label', 'file', 'thumb', 'width',
 export const STUDY_KEYS = Object.freeze(['topics', 'cards']);
 export const TOPIC_KEYS = Object.freeze(['id', 'name', 'items', 'createdAt']);
 export const ITEM_KEYS = Object.freeze(['id', 'name', 'note']);
-export const CARD_KEYS = Object.freeze(['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'notes', 'createdAt', 'updatedAt']);
-export const IMG_KEYS = Object.freeze(['file', 'thumb', 'width', 'height', 'bytes']);
+export const CARD_KEYS = Object.freeze(['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'more', 'notes', 'createdAt', 'updatedAt']);
+export const IMG_KEYS = Object.freeze(['file', 'thumb', 'width', 'height', 'bytes', 'label']);
+export const PAGE_KEYS = Object.freeze(['img', 'marks']);
 
 /** @param {unknown} v */
 function isPlainObject(v) {
@@ -83,7 +84,9 @@ function knownJson(/** @type {unknown} */ v, /** @type {readonly string[]} */ kn
 const listJson = (/** @type {(x: unknown) => string} */ one) => (/** @type {unknown} */ val) => (Array.isArray(val) ? '[' + val.map(one).join(',') + ']' : plainJson(val));
 const itemJson = (/** @type {unknown} */ it) => knownJson(it, ITEM_KEYS);
 const topicJson = (/** @type {unknown} */ tp) => knownJson(tp, TOPIC_KEYS, { items: listJson(itemJson) });
-const cardJson = (/** @type {unknown} */ c) => knownJson(c, CARD_KEYS, { img: (img) => knownJson(img, IMG_KEYS) });
+const imgJson = (/** @type {unknown} */ img) => knownJson(img, IMG_KEYS);
+const pageJson = (/** @type {unknown} */ p) => knownJson(p, PAGE_KEYS, { img: imgJson });
+const cardJson = (/** @type {unknown} */ c) => knownJson(c, CARD_KEYS, { img: imgJson, more: listJson(pageJson) });
 
 /** 学习板块的几行（不含最后的逗号）。不是对象时原样写一行。 */
 function studyLines(/** @type {unknown} */ study) {

@@ -11,7 +11,8 @@
 //   - 左栏是截图。传了 opts.shots（main.js 给，怎么传见 sheet.js 的 shotApi）才是真的截图功能：
 //     · 当前选中的那张在 16:9 的区域里完整显示，点它在新标签页打开原图（<a target="_blank">，blob: 地址）；
 //     · 下面一排 150×84 的缩略图，每张下面是它的标签（开仓时 / 持仓中 / 平仓后 / 自己写的字 / 无）。点缩略图换大图；
-//       每张下面还有「收进学习」（opts.toStudy）：用这张截图新建一张学习卡；
+//       缩略图下面一行「收进学习…」（opts.toStudy）：点了进入勾选，截图左上角出现勾（默认全勾），点图取消；
+//       「收进学习（n 张）」把勾上的几张按顺序放进同一张学习卡（opts.toStudy(交易 id, [截图…])）；Esc 或「取消」退出勾选；
 //       点标签在 开仓时 → 持仓中 → 平仓后 → 无 之间循环（自己写的再点回到开仓时）；点标签旁边的小笔变成文本框打字
 //       （回车或点别处保存，Esc 不改；清空就是"无"）；鼠标移上去（或用键盘移到上面）出现"删除"：页内确认，删了显示 10 秒内可以撤销的提示，
 //       撤销把文件和记录都放回来；
@@ -92,6 +93,10 @@ function penIcon() {
 
 function setText(node, text) {
   if (node.textContent !== text) node.textContent = text;
+}
+
+function setHidden(node, hidden) {
+  if (node.hidden !== !!hidden) node.hidden = !!hidden;
 }
 
 function setClass(node, cls) {
@@ -214,6 +219,15 @@ export function mountDetail(root, store, opts = {}) {
   if (shotsApi) pasteBox.appendChild(el('small', null, '或点这里选图片'));
   const hint = thumbs.appendChild(el('span', 'panel-sub shot-hint'));
   hint.setAttribute('role', 'status');
+  // 收进学习：先勾选几张，再一起放进同一张学习卡
+  const learnBar = left.appendChild(el('div', 'learn-bar'));
+  learnBar.hidden = true;
+  const learnStart = learnBar.appendChild(button('btn small learn-start', '收进学习…'));
+  learnStart.title = '勾几张截图，放进同一张学习卡，去「学习」里画批注、写结论';
+  const learnText = learnBar.appendChild(el('span', 'learn-text'));
+  const learnCancel = learnBar.appendChild(button('btn small', '取消'));
+  const learnGo = learnBar.appendChild(button('btn small primary', '收进学习'));
+  const learn = { on: false, picked: new Set() };
   let fileInput = null;
   if (shotsApi) {
     fileInput = left.appendChild(document.createElement('input'));
@@ -401,8 +415,62 @@ export function mountDetail(root, store, opts = {}) {
     });
     const k = ids.indexOf(curShotId);
     renderBig(k === -1 ? null : list[k], k, it);
+    if (fresh) learn.on = false;
+    for (const x of Array.from(learn.picked)) if (ids.indexOf(x) === -1) learn.picked.delete(x);
     syncShotsEditable();
   }
+
+  /** 「收进学习」那一行：平时一个按钮；勾选时是「已选 n 张」「取消」「收进学习（n 张）」，截图上出现勾 */
+  function renderLearn() {
+    const can = !!toStudy && !!shotsApi && store.canEdit() && openId !== null && shownIds.length > 0;
+    if (!can) learn.on = false;
+    setHidden(learnBar, !can);
+    learnBar.classList.toggle('on', learn.on);
+    thumbs.classList.toggle('picking', learn.on);
+    setHidden(learnStart, learn.on);
+    setHidden(learnText, !learn.on);
+    setHidden(learnCancel, !learn.on);
+    setHidden(learnGo, !learn.on);
+    const n = learn.picked.size;
+    setText(learnText, n ? `已选 ${n} 张，会放进同一张学习卡` : '点截图勾选要收进学习的几张');
+    setText(learnGo, `收进学习（${n} 张）`);
+    learnGo.disabled = !n;
+    shownIds.forEach((id, k) => {
+      const item = items.get(id);
+      if (!item) return;
+      const on = learn.on && learn.picked.has(id);
+      item.root.classList.toggle('picked', on);
+      setText(item.mark, on ? '✓' : '');
+      if (learn.on) item.pick.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (learn.on) item.pick.setAttribute('aria-label', `第 ${k + 1} 张截图：${on ? '已勾选，点一下取消' : '点一下勾选'}`);
+    });
+  }
+  function startLearn() {
+    learn.on = true;
+    learn.picked = new Set(shownIds);
+    renderLearn();
+    learnGo.focus();
+  }
+  function stopLearn(focus = true) {
+    if (!learn.on) return;
+    learn.on = false;
+    learn.picked.clear();
+    if (openId !== null) fill(false);
+    else renderLearn();
+    if (focus && !learnStart.hidden) learnStart.focus();
+  }
+  learnStart.addEventListener('click', startLearn);
+  learnCancel.addEventListener('click', () => stopLearn());
+  learnGo.addEventListener('click', () => {
+    if (openId === null || !learn.picked.size) return;
+    const it = tradeItem(openId);
+    const list = (it && Array.isArray(it.t.shots) ? it.t.shots : []).filter((s) => s && learn.picked.has(s.id));
+    if (!list.length) return;
+    const id = openId;
+    learn.on = false;
+    learn.picked.clear();
+    toStudy(id, list);
+  });
 
   function buildItem(id) {
     const itemRoot = el('div', 'thumb-item');
@@ -414,17 +482,14 @@ export function mountDetail(root, store, opts = {}) {
     pen.title = PEN_TITLE;
     pen.appendChild(penIcon());
     const del = itemRoot.appendChild(button('thumb-del', '删除'));
-    // 收进学习：用这张截图新建一张学习卡（main.js 给了 opts.toStudy 才有）
-    const learn = toStudy ? itemRoot.appendChild(button('to-study', '收进学习')) : null;
-    if (learn) {
-      learn.title = '用这张截图新建一张学习卡，去「学习」里画批注、写结论';
-      learn.addEventListener('click', () => {
-        const shot = openId === null ? null : shotOf(openId, id);
-        if (shot) toStudy(openId, shot);
-      });
-    }
-    const item = { id, root: itemRoot, pick, row, lab, pen, del, learn, path: null, held: false, edit: null };
-    pick.addEventListener('click', () => selectShot(id));
+    const mark = itemRoot.appendChild(el('span', 'pick-mark'));
+    mark.setAttribute('aria-hidden', 'true');
+    const item = { id, root: itemRoot, pick, row, lab, pen, del, mark, path: null, held: false, edit: null };
+    pick.addEventListener('click', () => {
+      if (!learn.on) { selectShot(id); return; }
+      if (learn.picked.has(id)) learn.picked.delete(id); else learn.picked.add(id);
+      renderLearn();
+    });
     lab.addEventListener('click', () => cycleLabel(id));
     pen.addEventListener('click', () => editLabel(item));
     del.addEventListener('click', () => { deleteShotFlow(id); });
@@ -787,8 +852,8 @@ export function mountDetail(root, store, opts = {}) {
       else item.lab.setAttribute('aria-disabled', 'true');
       item.lab.title = can ? LABEL_TITLE : why;
       if (item.pen.hidden !== !can) item.pen.hidden = !can;
-      if (item.learn && item.learn.hidden !== !can) item.learn.hidden = !can;
     }
+    renderLearn();
     if (openId !== null && curShotId === null) showBigText(NO_SHOT_TEXT, can ? NO_SHOT_HELP : '');
   }
 
@@ -888,7 +953,8 @@ export function mountDetail(root, store, opts = {}) {
     if (inOtherDialog(e.target)) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      close();
+      if (learn.on) stopLearn(); // 正在勾选：Esc 只退出勾选
+      else close();
       return;
     }
     if (e.key === 'Tab') {

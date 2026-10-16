@@ -5,9 +5,13 @@
 //   topics: [{ id: 'tp_…', name, items: [{ id: 'kp_…', name, note }] }],   主题 → 知识点；note 是知识点的「要点」
 //   cards:  [{ id: 'c_…', item: 'kp_…' 或 ''（未归类）, title, kind: 'good'|'bad', symbol, tf, source,
 //             trade: 't_…' 或 null（从复盘收进来的那一笔）, take（一句话结论）,
-//             img: null 或 { file, thumb?, width?, height?, bytes? }, marks: [批注], notes: [{ n, text }],
-//             createdAt, updatedAt }]
+//             img: null 或 { file, thumb?, width?, height?, bytes?, label? }, marks: [批注],
+//             more?: [{ img: {同上}, marks: [批注] }]（第 2 张起的图，按顺序；没有就不写这个键），
+//             notes: [{ n, text }], createdAt, updatedAt }]
 // }
+// 一张卡可以有好几张图：第一张是 img + marks（和只有一张图时完全一样，旧数据不用改），后面的放在 more 里。
+// img.label 是这张图的标签（开仓时 / 持仓中 / 平仓后 / 自己写的字），可以没有。编号点在整张卡里连着编：
+// 第一张的编号点在前，然后是 more 里一张一张往后排；notes 只有一份，和这些编号点一一对应。
 // 卡片在数组里的先后就是显示的先后（新卡放最前面）。知识点被删掉后，引用它的卡片不会悬空：删知识点时一起删掉
 // （可以撤销）；读到别处来的、item 指向不存在知识点的卡片，界面当成「未归类」显示。
 //
@@ -21,7 +25,7 @@
 // 图片和复盘截图放在同一个地方：shots/<卡片 id>/<图片 id>.webp（缩略图 .thumb.webp）；
 // 从复盘收进来的卡片直接引用那一笔的截图路径 shots/<交易 id>/<截图 id>.webp，不另存一份。
 
-export { STUDY_KEYS, TOPIC_KEYS, ITEM_KEYS, CARD_KEYS, IMG_KEYS } from './journal-format.js';
+export { STUDY_KEYS, TOPIC_KEYS, ITEM_KEYS, CARD_KEYS, IMG_KEYS, PAGE_KEYS } from './journal-format.js';
 
 /** 批注画布的大小（16:9） */
 export const MARK_W = 1000;
@@ -31,8 +35,10 @@ export const KINDS = Object.freeze(['good', 'bad']);
 /** 名字、标题这类短文字最多几个字；要点、结论、说明这类长文字最多几个字 */
 export const SHORT_MAX = 40;
 export const LONG_MAX = 2000;
-/** 一张卡最多几个批注（防止误操作画出成千上万个） */
+/** 一张图最多几个批注（防止误操作画出成千上万个） */
 export const MAX_MARKS = 200;
+/** 一张卡最多几张图（img 加 more） */
+export const MAX_PAGES = 9;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 /** 图片路径：shots/<卡片或交易 id>/<文件名> */
@@ -116,18 +122,33 @@ export function validateStudy(study) {
       }
       if (!KINDS.includes(c.kind)) bad(c.id, what + '的 kind 必须是 "good" 或 "bad"');
       if (c.trade !== null && typeof c.trade !== 'string') bad(c.id, what + '的 trade 必须是交易 id 或 null');
-      if (c.img !== null) {
-        if (!isPlainObject(c.img)) bad(c.id, what + '的 img 必须是对象或 null');
+      const checkImg = (img, w) => {
+        if (!isPlainObject(img)) { bad(c.id, w + '必须是对象'); return; }
+        if (!isImgPath(img.file)) bad(c.id, `${w}路径必须是 shots/<id>/<文件名>，实际是 ${JSON.stringify(img.file)}`);
+        if (img.thumb !== undefined && !isImgPath(img.thumb)) bad(c.id, `${w}的缩略图路径必须是 shots/<id>/<文件名>`);
+        for (const f of ['width', 'height', 'bytes']) {
+          if (img[f] !== undefined && !(isNum(img[f]) && img[f] >= 0)) bad(c.id, `${w}的 ${f} 必须是不小于 0 的数字`);
+        }
+        if (img.label !== undefined && typeof img.label !== 'string') bad(c.id, w + '的标签必须是字符串');
+      };
+      const checkMarks = (marks, w) => {
+        if (!Array.isArray(marks)) bad(c.id, w + '的 marks（批注）必须是数组');
+        else if (marks.some((m) => !isPlainObject(m))) bad(c.id, w + '的批注必须都是对象');
+      };
+      if (c.img !== null) checkImg(c.img, what + '的图片');
+      checkMarks(c.marks, what);
+      if (c.more !== undefined) {
+        if (!Array.isArray(c.more)) bad(c.id, what + '的 more（第 2 张起的图）必须是数组');
         else {
-          if (!isImgPath(c.img.file)) bad(c.id, `${what}的图片路径必须是 shots/<id>/<文件名>，实际是 ${JSON.stringify(c.img.file)}`);
-          if (c.img.thumb !== undefined && !isImgPath(c.img.thumb)) bad(c.id, `${what}的缩略图路径必须是 shots/<id>/<文件名>`);
-          for (const f of ['width', 'height', 'bytes']) {
-            if (c.img[f] !== undefined && !(isNum(c.img[f]) && c.img[f] >= 0)) bad(c.id, `${what}的图片 ${f} 必须是不小于 0 的数字`);
-          }
+          if (c.more.length && c.img === null) bad(c.id, what + '没有第一张图，却有第 2 张起的图');
+          c.more.forEach((p, k) => {
+            const w = `${what}的第 ${k + 2} 张图`;
+            if (!isPlainObject(p)) { bad(c.id, w + '不是一个对象'); return; }
+            checkImg(p.img, w);
+            checkMarks(p.marks, w);
+          });
         }
       }
-      if (!Array.isArray(c.marks)) bad(c.id, what + '的 marks（批注）必须是数组');
-      else if (c.marks.some((m) => !isPlainObject(m))) bad(c.id, what + '的批注必须都是对象');
       if (!Array.isArray(c.notes)) bad(c.id, what + '的 notes（编号说明）必须是数组');
       else if (c.notes.some((n) => !isPlainObject(n) || !Number.isInteger(n.n) || typeof n.text !== 'string')) bad(c.id, what + '的编号说明格式不对');
       for (const f of ['createdAt', 'updatedAt']) if (c[f] !== undefined && typeof c[f] !== 'string') bad(c.id, `${what}的 ${f} 必须是字符串`);
@@ -147,12 +168,19 @@ export function cleanStudy(study) {
     name: clean(tp.name),
     items: tp.items.map((it) => ({ ...it, name: clean(it.name), note: clean(it.note) })),
   }));
-  out.cards = (Array.isArray(study.cards) ? study.cards : []).map((c) => ({
-    ...c,
-    title: clean(c.title), symbol: clean(c.symbol), tf: clean(c.tf), source: clean(c.source), take: clean(c.take), item: clean(c.item),
-    marks: c.marks.map((m) => (typeof m.label === 'string' ? { ...m, label: clean(m.label) } : m)),
-    notes: c.notes.map((n) => ({ ...n, text: clean(n.text) })),
-  }));
+  const cleanMarks = (marks) => marks.map((m) => (typeof m.label === 'string' ? { ...m, label: clean(m.label) } : m));
+  const cleanImg = (img) => (isPlainObject(img) && typeof img.label === 'string' ? { ...img, label: clean(img.label) } : img);
+  out.cards = (Array.isArray(study.cards) ? study.cards : []).map((c) => {
+    const card = {
+      ...c,
+      title: clean(c.title), symbol: clean(c.symbol), tf: clean(c.tf), source: clean(c.source), take: clean(c.take), item: clean(c.item),
+      img: cleanImg(c.img),
+      marks: cleanMarks(c.marks),
+      notes: c.notes.map((n) => ({ ...n, text: clean(n.text) })),
+    };
+    if (Array.isArray(c.more)) card.more = c.more.map((p) => ({ ...p, img: cleanImg(p.img), marks: cleanMarks(p.marks) }));
+    return card;
+  });
   return out;
 }
 
@@ -195,28 +223,41 @@ export function sanitizeMark(m) {
 }
 
 /**
- * 编号点从 1 起按出现顺序重新编号，说明跟着改号；没有对应编号点的说明去掉、缺说明的编号点补一条空说明。
- * @returns {{marks: object[], notes: {n: number, text: string}[]}}
+ * 好几张图的编号点连起来，从 1 起按出现顺序重新编号（第一张图在前），说明跟着改号；
+ * 没有对应编号点的说明去掉、缺说明的编号点补一条空说明。lists 是每张图的批注。
+ * @returns {{lists: object[][], notes: {n: number, text: string}[]}}
  */
-export function renumberPins(marks, notes) {
-  const map = new Map();
-  let k = 0;
-  const outMarks = marks.map((m) => {
-    if (m.t !== 'pin') return m;
-    k += 1;
-    if (!map.has(m.n)) map.set(m.n, k);
-    return { ...m, n: k };
-  });
+export function renumberAll(lists, notes) {
   const byOld = new Map();
   for (const n of notes) if (isPlainObject(n) && Number.isInteger(n.n) && !byOld.has(n.n)) byOld.set(n.n, typeof n.text === 'string' ? n.text : '');
+  let k = 0;
   const outNotes = [];
-  let j = 0;
-  for (const m of marks) {
-    if (m.t !== 'pin') continue;
-    j += 1;
-    outNotes.push({ n: j, text: byOld.has(m.n) ? byOld.get(m.n) : '' });
-  }
-  return { marks: outMarks, notes: outNotes };
+  const outLists = lists.map((marks) => marks.map((m) => {
+    if (m.t !== 'pin') return m;
+    k += 1;
+    outNotes.push({ n: k, text: byOld.has(m.n) ? byOld.get(m.n) : '' });
+    return { ...m, n: k };
+  }));
+  return { lists: outLists, notes: outNotes };
+}
+
+/** 只有一张图时的 renumberAll */
+export function renumberPins(marks, notes) {
+  const r = renumberAll([marks], notes);
+  return { marks: r.lists[0], notes: r.notes };
+}
+
+const sanitizeMarks = (list) => list.map(sanitizeMark).filter(Boolean).slice(0, MAX_MARKS);
+
+/** 一张图：路径合规（缩略图可以没有），尺寸是数字，标签截到 SHORT_MAX 个字（空的不写）。不合规返回 undefined */
+export function sanitizeImg(v) {
+  if (!isPlainObject(v) || !isImgPath(v.file) || (v.thumb !== undefined && !isImgPath(v.thumb))) return undefined;
+  const img = { file: v.file };
+  if (v.thumb !== undefined) img.thumb = v.thumb;
+  for (const f of ['width', 'height', 'bytes']) if (isNum(v[f]) && v[f] >= 0) img[f] = v[f];
+  const label = typeof v.label === 'string' ? cut(v.label.replace(/\s+/g, ' ').trim(), SHORT_MAX) : '';
+  if (label) img.label = label;
+  return img;
 }
 
 /**
@@ -249,17 +290,19 @@ export function sanitizeCardPatch(fields) {
       case 'trade':
         if (v === null || (typeof v === 'string' && v.startsWith('t_') && ID_PATTERN.test(v))) patch.trade = v; else rejected.push(key);
         break;
-      case 'img':
-        if (v === null) patch.img = null;
-        else if (isPlainObject(v) && isImgPath(v.file) && (v.thumb === undefined || isImgPath(v.thumb))) {
-          const img = { file: v.file };
-          if (v.thumb !== undefined) img.thumb = v.thumb;
-          for (const f of ['width', 'height', 'bytes']) if (isNum(v[f]) && v[f] >= 0) img[f] = v[f];
-          patch.img = img;
-        } else rejected.push(key);
+      case 'img': {
+        const img = v === null ? null : sanitizeImg(v);
+        if (img !== undefined) patch.img = img; else rejected.push(key);
         break;
+      }
       case 'marks':
-        if (Array.isArray(v)) patch.marks = v.map(sanitizeMark).filter(Boolean).slice(0, MAX_MARKS); else rejected.push(key);
+        if (Array.isArray(v)) patch.marks = sanitizeMarks(v); else rejected.push(key);
+        break;
+      case 'more':
+        if (Array.isArray(v)) {
+          patch.more = v.map((p) => (isPlainObject(p) ? { img: sanitizeImg(p.img), marks: Array.isArray(p.marks) ? sanitizeMarks(p.marks) : [] } : null))
+            .filter((p) => p && p.img).slice(0, MAX_PAGES - 1);
+        } else rejected.push(key);
         break;
       case 'notes':
         if (Array.isArray(v)) patch.notes = v.filter((n) => isPlainObject(n) && Number.isInteger(n.n)).map((n) => ({ n: n.n, text: cut(typeof n.text === 'string' ? n.text : '', LONG_MAX) }));
@@ -283,11 +326,27 @@ export function findItem(study, itemId) {
   return null;
 }
 
-/** 学习卡引用的图片路径（大图和缩略图） */
+/** 一张卡的所有图，按顺序：[{ img, marks }]（第一张是 img + marks，后面是 more）。没有图返回 [] */
+export function cardPages(card) {
+  if (!card || !isPlainObject(card.img)) return [];
+  const pages = [{ img: card.img, marks: Array.isArray(card.marks) ? card.marks : [] }];
+  if (Array.isArray(card.more)) {
+    for (const p of card.more) if (isPlainObject(p) && isPlainObject(p.img)) pages.push({ img: p.img, marks: Array.isArray(p.marks) ? p.marks : [] });
+  }
+  return pages;
+}
+
+/** cardPages 的反过来：几张图 → 卡片上的 img、marks、more（没有第 2 张起的图时 more 是空数组，state 会把这个键去掉） */
+export function pagesPatch(pages) {
+  if (!pages.length) return { img: null, marks: [], more: [] };
+  return { img: pages[0].img, marks: pages[0].marks, more: pages.slice(1).map((p) => ({ img: p.img, marks: p.marks })) };
+}
+
+/** 学习卡引用的图片路径（每张图的大图和缩略图） */
 export function cardFiles(card) {
   const out = [];
-  if (card && isPlainObject(card.img)) {
-    for (const p of [card.img.file, card.img.thumb]) if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
+  for (const { img } of cardPages(card)) {
+    for (const p of [img.file, img.thumb]) if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
   }
   return out;
 }

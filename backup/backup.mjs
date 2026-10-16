@@ -45,8 +45,10 @@ const SHOT_KEYS = ['id', 'label', 'file', 'thumb', 'width', 'height', 'bytes', '
 const STUDY_KEYS = ['topics', 'cards'];
 const TOPIC_KEYS = ['id', 'name', 'items', 'createdAt'];
 const ITEM_KEYS = ['id', 'name', 'note'];
-const CARD_KEYS = ['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'notes', 'createdAt', 'updatedAt'];
-const IMG_KEYS = ['file', 'thumb', 'width', 'height', 'bytes'];
+// 0.4.1 起一张卡可以有好几张图：第 2 张起放在 more 里（[{ img, marks }]），img 里可以有 label
+const CARD_KEYS = ['id', 'item', 'title', 'kind', 'symbol', 'tf', 'source', 'trade', 'take', 'img', 'marks', 'more', 'notes', 'createdAt', 'updatedAt'];
+const IMG_KEYS = ['file', 'thumb', 'width', 'height', 'bytes', 'label'];
+const PAGE_KEYS = ['img', 'marks'];
 
 /** 已知键按固定顺序在前（缺的不补），不认识的键接在后面，保持原来的相对顺序。 */
 function orderedKeys(obj, known) {
@@ -77,7 +79,17 @@ function knownJson(v, known, nested = {}) {
 }
 const listJson = (one) => (val) => (Array.isArray(val) ? '[' + val.map(one).join(',') + ']' : plain(val));
 const topicJson = (tp) => knownJson(tp, TOPIC_KEYS, { items: listJson((it) => knownJson(it, ITEM_KEYS)) });
-const cardJson = (c) => knownJson(c, CARD_KEYS, { img: (img) => knownJson(img, IMG_KEYS) });
+const imgJson = (img) => knownJson(img, IMG_KEYS);
+const pageJson = (p) => knownJson(p, PAGE_KEYS, { img: imgJson });
+const cardJson = (c) => knownJson(c, CARD_KEYS, { img: imgJson, more: listJson(pageJson) });
+
+/** 一张学习卡的所有图：img 加 more 里的（备份要下载的就是这些） */
+function cardImgs(card) {
+  if (!isObj(card) || !isObj(card.img)) return [];
+  const out = [card.img];
+  if (Array.isArray(card.more)) for (const p of card.more) if (isObj(p) && isObj(p.img)) out.push(p.img);
+  return out;
+}
 
 /** 学习板块：study 的每个键一行（缩进 4），topics、cards 里每个主题、每张卡一行（缩进 6） */
 function studyLines(study) {
@@ -195,11 +207,19 @@ function validateStudy(study, errs) {
     const at = `第 ${i + 1} 张学习卡`;
     if (!isObj(c)) { errs.push(`${at}不是对象`); return; }
     if (typeof c.id !== 'string' || !c.id.startsWith('c_') || !ID_PATTERN.test(c.id)) errs.push(`${at}的 id 必须以 c_ 开头`);
+    const checkImg = (img, w) => {
+      if (!isObj(img)) { errs.push(`${w}必须是对象`); return; }
+      if (!studyPathOk(img.file)) errs.push(`${w}路径必须是 shots/<id>/<文件名>，实际是 ${JSON.stringify(img.file)}`);
+      if (img.thumb !== undefined && !studyPathOk(img.thumb)) errs.push(`${w}的缩略图路径必须是 shots/<id>/<文件名>`);
+      if (img.bytes !== undefined && !(Number.isInteger(img.bytes) && img.bytes >= 0)) errs.push(`${w}的 bytes 必须是不小于 0 的整数`);
+    };
+    if (c.more !== undefined) {
+      if (!Array.isArray(c.more)) errs.push(`${at}的 more 必须是数组`);
+      else c.more.forEach((p, k) => (isObj(p) ? checkImg(p.img, `${at}的第 ${k + 2} 张图`) : errs.push(`${at}的第 ${k + 2} 张图不是对象`)));
+    }
     if (c.img === null || c.img === undefined) return;
     if (!isObj(c.img)) { errs.push(`${at}的 img 必须是对象或 null`); return; }
-    if (!studyPathOk(c.img.file)) errs.push(`${at}的图片路径必须是 shots/<id>/<文件名>，实际是 ${JSON.stringify(c.img.file)}`);
-    if (c.img.thumb !== undefined && !studyPathOk(c.img.thumb)) errs.push(`${at}的缩略图路径必须是 shots/<id>/<文件名>`);
-    if (c.img.bytes !== undefined && !(Number.isInteger(c.img.bytes) && c.img.bytes >= 0)) errs.push(`${at}的图片 bytes 必须是不小于 0 的整数`);
+    checkImg(c.img, `${at}的图片`);
   });
 }
 
@@ -463,12 +483,13 @@ export async function runBackup(o) {
     // 学习卡的图（从复盘收进来的卡片引用的是交易截图，上面已经排过，不重复下）
     const cards = isObj(doc.study) && Array.isArray(doc.study.cards) ? doc.study.cards : [];
     for (const card of cards) {
-      if (!isObj(card) || !isObj(card.img)) continue;
-      for (const [path, bytes] of [[card.img.file, card.img.bytes], [card.img.thumb, undefined]]) {
-        if (path === undefined || queued.has(path)) continue;
-        queued.add(path);
-        if (tracked.has(path) || existsSync(join(dir, path))) continue;
-        jobs.push({ trade: 0, tradeId: card.id, file: path, bytes });
+      for (const img of cardImgs(card)) {
+        for (const [path, bytes] of [[img.file, img.bytes], [img.thumb, undefined]]) {
+          if (path === undefined || queued.has(path)) continue;
+          queued.add(path);
+          if (tracked.has(path) || existsSync(join(dir, path))) continue;
+          jobs.push({ trade: 0, tradeId: card.id, file: path, bytes });
+        }
       }
     }
     const downloaded = [];

@@ -9,7 +9,7 @@
 // 编辑框开着的时候，后面的卡片墙不跟着每个字重画，关掉时再画一次（不打断输入法、不反复要图片地址）。
 // 全部用 createElement / textContent，不拼 HTML；颜色、位置用 element.style 或 SVG 属性（页面有内容安全策略）。
 
-import { MARK_W, MARK_H, MARK_COLORS, findItem, LONG_MAX, SHORT_MAX } from '../study.js';
+import { MARK_W, MARK_H, MARK_COLORS, MAX_PAGES, cardPages, findItem, pagesPatch, LONG_MAX, SHORT_MAX } from '../study.js';
 import { confirmDialog, showToast } from './toast.js';
 import { errorText, readTransfer, readOnlyMessage, shotUrls } from './sheet.js';
 
@@ -111,10 +111,22 @@ function marksSvg(marks, selected) {
   return svg;
 }
 
+/** 编号点的颜色（在卡片的哪张图上都找） */
 const pinColor = (card, n) => {
-  const p = (card.marks || []).find((m) => m.t === 'pin' && m.n === n);
+  const all = [card.marks || [], ...cardPages(card).slice(1).map((p) => p.marks)].flat();
+  const p = all.find((m) => m.t === 'pin' && m.n === n);
   return COLOR_HEX[p ? p.c : 'red'];
 };
+
+/** 编号 → 在第几张图上（从 0 数）；说明分组用 */
+export function pinPages(card) {
+  const out = new Map();
+  cardPages(card).forEach((p, i) => { for (const m of p.marks) if (m.t === 'pin') out.set(m.n, i); });
+  return out;
+}
+
+/** 第 i 张图叫什么：有标签用标签，没有就「第 n 张」 */
+export const pageName = (page, i) => (page && page.img && page.img.label) || `第 ${i + 1} 张`;
 
 // ---------- 挂载 ----------
 
@@ -136,6 +148,7 @@ export function mountStudy(root, store, opts = {}) {
     symbol: '',
     kind: '',
     compare: new Set(),
+    shown: new Map(), // 卡片 id → 墙上正在看第几张图
     sideOpen: true,
     folded: new Set(),
     adding: null, // 'topic' | 主题 id（正在这个主题下加知识点）
@@ -161,10 +174,11 @@ export function mountStudy(root, store, opts = {}) {
   };
 
   // ---------- 图片 ----------
-  /** 一个 16:9 的图框：图片（异步取地址）+ 批注。path 为空时显示"还没放图" */
-  function shotBox(card, { full = false, selected = -1, extra = null } = {}) {
+  /** 一个 16:9 的图框：卡片第 page 张图（异步取地址）+ 这张图的批注。没有图时显示"还没放图"。extra 是叠在图上的东西 */
+  function shotBox(card, { full = false, selected = -1, extra = null, page = 0 } = {}) {
     const box = el('div', 'st-shot');
-    const img = card.img;
+    const pg = cardPages(card)[page] || null;
+    const img = pg ? pg.img : null;
     const path = img ? (full ? img.file : img.thumb || img.file) : null;
     if (path && urls) {
       const pic = el('img');
@@ -180,8 +194,8 @@ export function mountStudy(root, store, opts = {}) {
       box.classList.add('empty');
       box.appendChild(el('span', 'st-shot-note', '还没放图'));
     }
-    box.appendChild(marksSvg(card.marks, selected));
-    if (extra) box.appendChild(extra);
+    box.appendChild(marksSvg(pg ? pg.marks : card.marks, selected));
+    for (const x of [].concat(extra || [])) if (x) box.appendChild(x);
     return box;
   }
 
@@ -574,7 +588,37 @@ export function mountStudy(root, store, opts = {}) {
       cmp.appendChild(document.createTextNode('对比'));
       cmp.addEventListener('click', (e) => e.stopPropagation());
     }
-    art.appendChild(shotBox(card, { full: big, extra: cmp }));
+    // 好几张图：上面一张大图（左下角写标签、右上角 2/3），下面一排小图，点小图换大图（只换这张卡，不进数据）
+    const pages = cardPages(card);
+    let k = view.shown.get(card.id) || 0;
+    if (k >= pages.length) k = 0;
+    const extra = [cmp];
+    if (pages.length > 1) {
+      extra.push(el('span', 'st-cap', pageName(pages[k], k)));
+      extra.push(el('span', 'st-count', `${k + 1}/${pages.length}`));
+    }
+    art.appendChild(shotBox(card, { full: big, extra, page: k }));
+    if (pages.length > 1) {
+      const strip = el('div', 'st-strip');
+      strip.setAttribute('role', 'group');
+      strip.setAttribute('aria-label', '这张卡的几张图');
+      pages.forEach((p, i) => {
+        const b = button('st-strip-btn', null, `看${pageName(p, i)}`);
+        b.setAttribute('aria-pressed', String(i === k));
+        b.appendChild(shotBox(card, { page: i }));
+        b.appendChild(el('span', null, pageName(p, i)));
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          view.shown.set(card.id, i);
+          const next = cardEl(card, { compact, big });
+          art.replaceWith(next);
+          const again = next.querySelectorAll('.st-strip-btn')[i];
+          if (again) again.focus({ preventScroll: true });
+        });
+        strip.appendChild(b);
+      });
+      art.appendChild(strip);
+    }
     const body = el('div', 'st-card-body');
     const tr = el('div', 'st-card-title');
     tr.appendChild(el('h3', null, card.title || '（还没写标题）'));
@@ -595,7 +639,14 @@ export function mountStudy(root, store, opts = {}) {
     const notes = card.notes.filter((n) => n.text);
     if (notes.length) {
       const ol = el('ol', 'st-notes');
+      const pinAt = pinPages(card);
+      let lastPage = -1;
       for (const n of notes) {
+        const pi = pinAt.has(n.n) ? pinAt.get(n.n) : -1;
+        if (pages.length > 1 && pi !== lastPage && pi >= 0) {
+          ol.appendChild(el('li', 'st-notes-grp', pageName(pages[pi], pi)));
+          lastPage = pi;
+        }
         const li = el('li');
         const dot = el('span', 'st-dot', String(n.n));
         dot.style.background = pinColor(card, n.n);
@@ -777,7 +828,7 @@ export function mountStudy(root, store, opts = {}) {
   }
 
   function createEditor(cardId) {
-    const local = { tool: 'pin', color: 'red', selected: -1, undo: [], busy: false };
+    const local = { tool: 'pin', color: 'red', selected: -1, undo: [], busy: false, page: 0, target: 0 };
     let edHeld = [];
     const wrap = el('div', 'st-ed-wrap');
     const dlg = el('div', 'st-ed');
@@ -793,6 +844,16 @@ export function mountStudy(root, store, opts = {}) {
       if (!editable()) { readOnlyHint(); return false; }
       return store.actions.updateCard(cardId, patch);
     };
+    /** 正在编辑第几张图（图被删了、挪了以后拉回范围里） */
+    const pageAt = (c) => {
+      const n = cardPages(c).length;
+      if (local.page >= n) local.page = Math.max(0, n - 1);
+      return local.page;
+    };
+    /** 正在编辑的那张图上的批注 */
+    const pageMarks = (c) => { const p = cardPages(c)[pageAt(c)]; return p ? p.marks : c.marks; };
+    /** 编号点在这张图之前一共有几个（新放的编号点是几号要用） */
+    const pinsBefore = (c) => cardPages(c).slice(0, pageAt(c)).reduce((k, p) => k + p.marks.filter((m) => m.t === 'pin').length, 0);
 
     const fileInput = el('input');
     fileInput.type = 'file';
@@ -801,17 +862,23 @@ export function mountStudy(root, store, opts = {}) {
     fileInput.addEventListener('change', () => {
       const f = fileInput.files && fileInput.files[0];
       fileInput.value = '';
-      if (f) putImage(f);
+      if (f) putImage(f, local.target);
     });
+    /** 选图片：page 是 'new' 时加在最后，是数字时换掉那一张 */
+    const pickImage = (page) => { local.target = page; fileInput.click(); };
 
-    async function putImage(blob) {
+    async function putImage(blob, page = 'new') {
       if (!editable()) { readOnlyHint(); return; }
       if (!shots.addStudyImage) { showToast('图片功能没接上'); return; }
       if (local.busy) return;
+      const c0 = card();
+      const count = c0 ? cardPages(c0).length : 0;
+      if (page === 'new' && count >= MAX_PAGES) { showToast(`一张学习卡最多放 ${MAX_PAGES} 张图`); return; }
       local.busy = true;
       paint();
       try {
-        await shots.addStudyImage(cardId, blob);
+        await shots.addStudyImage(cardId, blob, { page: count ? page : 0 });
+        if (page === 'new' && count) local.page = count; // 加完直接看新加的那张
       } catch (err) {
         showToast('图没放上：' + errorText(err));
       } finally {
@@ -823,14 +890,27 @@ export function mountStudy(root, store, opts = {}) {
     function snapshot() {
       const c = card();
       if (!c) return;
-      local.undo.push(JSON.stringify({ marks: c.marks, notes: c.notes }));
+      local.undo.push(JSON.stringify({ lists: cardPages(c).map((p) => p.marks), notes: c.notes }));
       if (local.undo.length > 50) local.undo.shift();
     }
 
+    /** 几张图（可能换了顺序、改了某张的批注）连同说明一起存 */
+    function savePages(pages, notes) {
+      const c = card();
+      if (!c) return false;
+      return update({ ...pagesPatch(pages), notes: notes || c.notes });
+    }
+
+    /** 改正在编辑的那张图上的批注 */
     function setMarks(marks, notes, focusSel) {
       const c = card();
       if (!c) return;
-      update({ marks, notes: notes || c.notes });
+      const pages = cardPages(c);
+      if (!pages.length) update({ marks, notes: notes || c.notes });
+      else {
+        pages[pageAt(c)] = { ...pages[pageAt(c)], marks };
+        savePages(pages, notes);
+      }
       paint(focusSel);
     }
 
@@ -838,7 +918,7 @@ export function mountStudy(root, store, opts = {}) {
       const c = card();
       if (!c || local.selected < 0) return;
       snapshot();
-      const marks = c.marks.filter((m, i) => i !== local.selected);
+      const marks = pageMarks(c).filter((m, i) => i !== local.selected);
       local.selected = -1;
       setMarks(marks);
     }
@@ -848,8 +928,58 @@ export function mountStudy(root, store, opts = {}) {
       if (!s) return;
       const v = JSON.parse(s);
       local.selected = -1;
-      update(v);
+      const c = card();
+      const pages = c ? cardPages(c) : [];
+      if (pages.length && pages.length === v.lists.length) savePages(pages.map((p, i) => ({ ...p, marks: v.lists[i] })), v.notes);
+      else if (!pages.length) update({ marks: v.lists[0] || [], notes: v.notes });
       paint('#st-ed-undo');
+    }
+
+    /** 删掉整张卡里第 n 号编号点（不管在哪张图上）和它的说明 */
+    function deletePin(n) {
+      const c = card();
+      if (!c) return;
+      snapshot();
+      let k = 0;
+      const drop = (marks) => marks.filter((m) => !(m.t === 'pin' && ++k === n));
+      const pages = cardPages(c);
+      const notes = c.notes.filter((x) => x.n !== n);
+      if (!pages.length) update({ marks: drop(c.marks), notes });
+      else savePages(pages.map((p) => ({ ...p, marks: drop(p.marks) })), notes);
+      paint();
+    }
+
+    /** 换图的顺序：第 i 张和第 j 张对调 */
+    function movePage(i, j) {
+      const c = card();
+      if (!c) return;
+      const pages = cardPages(c);
+      if (j < 0 || j >= pages.length) return;
+      [pages[i], pages[j]] = [pages[j], pages[i]];
+      local.page = j;
+      local.selected = -1;
+      local.undo = [];
+      savePages(pages);
+      paint(j < i ? '#st-pg-left' : '#st-pg-right');
+    }
+
+    async function removePage(i) {
+      const c = card();
+      if (!c) return;
+      const pages = cardPages(c);
+      const ok = await confirmDialog({ title: `从这张卡里拿掉${pageName(pages[i], i)}？`, message: '这张图上的批注和编号说明会一起去掉。', confirmText: '拿掉', danger: true, initialFocus: 'cancel' });
+      if (!ok) return;
+      const cur = card();
+      if (!cur) return;
+      const now = cardPages(cur);
+      if (now[i] && now[i].img.file === pages[i].img.file) {
+        now.splice(i, 1);
+        local.selected = -1;
+        local.undo = [];
+        savePages(now);
+        if (local.page >= now.length) local.page = Math.max(0, now.length - 1);
+      }
+      paint();
     }
 
     // ---------- 画编辑框 ----------
@@ -920,12 +1050,38 @@ export function mountStudy(root, store, opts = {}) {
         if (editable() && !local.busy) {
           const pickBtn = button('btn primary', '选图片');
           pickBtn.id = 'st-ed-pick';
-          pickBtn.addEventListener('click', () => fileInput.click());
+          pickBtn.addEventListener('click', () => pickImage(0));
           drop.appendChild(pickBtn);
         }
         left.appendChild(drop);
         left.appendChild(el('p', 'st-hint', '没有图也可以只写文字，比如一条规则。'));
         return left;
+      }
+      const pages = cardPages(c);
+      const cur = pageAt(c);
+      // 这张卡的几张图：点一张切过去编辑它；最后是「＋ 加图」
+      if (pages.length > 1 || editable()) {
+        const tabs = el('div', 'st-pages');
+        tabs.setAttribute('role', 'group');
+        tabs.setAttribute('aria-label', '这张卡里的图');
+        pages.forEach((p, i) => {
+          const b = button('st-page-tab', null, `编辑${pageName(p, i)}`);
+          b.id = 'st-pg-' + i;
+          b.setAttribute('aria-pressed', String(i === cur));
+          b.appendChild(shotBox(c, { page: i }));
+          b.appendChild(el('span', null, pageName(p, i)));
+          b.addEventListener('click', () => { local.page = i; local.selected = -1; local.undo = []; paint('#st-pg-' + i); });
+          tabs.appendChild(b);
+        });
+        if (editable() && pages.length < MAX_PAGES) {
+          const add = button('st-page-add', local.busy ? '处理中…' : '＋ 加图');
+          add.id = 'st-pg-add';
+          add.disabled = local.busy;
+          add.title = '再放一张图：选图片，也可以直接 Ctrl+V 粘贴';
+          add.addEventListener('click', () => pickImage('new'));
+          tabs.appendChild(add);
+        }
+        left.appendChild(tabs);
       }
       if (editable()) {
         const tools = el('div', 'st-tools');
@@ -950,9 +1106,9 @@ export function mountStudy(root, store, opts = {}) {
           sw.addEventListener('click', () => {
             local.color = k;
             const cur = card();
-            if (cur && local.selected >= 0 && cur.marks[local.selected]) {
+            if (cur && local.selected >= 0 && pageMarks(cur)[local.selected]) {
               snapshot();
-              const marks = cur.marks.slice();
+              const marks = pageMarks(cur).slice();
               marks[local.selected] = { ...marks[local.selected], c: k };
               setMarks(marks, null, '#st-sw-' + k);
             } else paint('#st-sw-' + k);
@@ -970,13 +1126,13 @@ export function mountStudy(root, store, opts = {}) {
           del.addEventListener('click', deleteSelected);
           tools.appendChild(del);
         }
-        const swap = button('st-tool', local.busy ? '处理中…' : '换图');
+        const swap = button('st-tool', local.busy ? '处理中…' : pages.length > 1 ? '换这张图' : '换图');
         swap.disabled = local.busy;
-        swap.addEventListener('click', () => fileInput.click());
+        swap.addEventListener('click', () => pickImage(cur));
         tools.appendChild(swap);
         left.appendChild(tools);
       }
-      const stage = shotBox(c, { full: true, selected: local.selected });
+      const stage = shotBox(c, { full: true, selected: local.selected, page: cur });
       stage.classList.add('st-stage');
       if (local.tool === 'select') stage.classList.add('select');
       const svg = stage.querySelector('svg');
@@ -986,6 +1142,41 @@ export function mountStudy(root, store, opts = {}) {
       if (editable()) bindDraw(svg);
       left.appendChild(stage);
       if (editable()) left.appendChild(el('p', 'st-hint', TOOL_HINT[local.tool]));
+      // 这张图的标签；几张图时还能左右挪、从卡里拿掉
+      if (editable()) {
+        const row = el('div', 'st-page-row');
+        const lab = textInput('st-pg-label', pages[cur].img.label || '', (v) => {
+          const now = card();
+          if (!now) return;
+          const ps = cardPages(now);
+          const i = pageAt(now);
+          if (!ps[i]) return;
+          ps[i] = { ...ps[i], img: { ...ps[i].img, label: v } };
+          savePages(ps);
+          for (const t of dlg.querySelectorAll('.st-page-tab')) {
+            const k = Number(t.id.slice(6));
+            const span = t.querySelector('span:last-child');
+            if (k === i && span) span.textContent = pageName({ img: { label: v.trim() } }, i);
+          }
+        }, { placeholder: '比如：开仓时、持仓中、平仓后' });
+        row.appendChild(field('这张图的标签', lab));
+        if (pages.length > 1) {
+          const moves = el('div', 'st-page-moves');
+          const lb = button('btn', '← 往前');
+          lb.id = 'st-pg-left';
+          lb.disabled = cur === 0;
+          lb.addEventListener('click', () => movePage(cur, cur - 1));
+          const rb = button('btn', '往后 →');
+          rb.id = 'st-pg-right';
+          rb.disabled = cur === pages.length - 1;
+          rb.addEventListener('click', () => movePage(cur, cur + 1));
+          const rm = button('btn', '从卡里拿掉这张');
+          rm.addEventListener('click', () => removePage(cur));
+          moves.append(lb, rb, rm);
+          row.appendChild(moves);
+        }
+        left.appendChild(row);
+      } else if (pages[cur].img.label) left.appendChild(el('p', 'st-hint', '这张图：' + pages[cur].img.label));
       return left;
     }
 
@@ -1013,13 +1204,15 @@ export function mountStudy(root, store, opts = {}) {
         }
         if (local.tool === 'pin') {
           snapshot();
-          const n = c.marks.filter((m) => m.t === 'pin').length + 1;
-          setMarks([...c.marks, { t: 'pin', n: 999, x: p.x, y: p.y, c: local.color }], [...c.notes, { n: 999, text: '' }], '#st-note-' + n);
+          const marks = pageMarks(c);
+          const n = pinsBefore(c) + marks.filter((m) => m.t === 'pin').length + 1;
+          setMarks([...marks, { t: 'pin', n: 999, x: p.x, y: p.y, c: local.color }], [...c.notes, { n: 999, text: '' }], '#st-note-' + n);
           return;
         }
         if (local.tool === 'hline') {
           snapshot();
-          setMarks([...c.marks, { t: 'hline', y: p.y, c: local.color, label: '' }], null, '#st-line-' + c.marks.length);
+          const marks = pageMarks(c);
+          setMarks([...marks, { t: 'hline', y: p.y, c: local.color, label: '' }], null, '#st-line-' + marks.length);
           return;
         }
         start = p;
@@ -1033,14 +1226,14 @@ export function mountStudy(root, store, opts = {}) {
         temp = local.tool === 'rect'
           ? { t: 'rect', x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y), c: local.color }
           : { t: 'arrow', x1: start.x, y1: start.y, x2: p.x, y2: p.y, c: local.color };
-        drawMarks(svg, [...c.marks, temp]);
+        drawMarks(svg, [...pageMarks(c), temp]);
       });
       const end = () => {
         if (!start) return;
         start = null;
         const c = card();
         const ok = temp && (temp.t === 'rect' ? temp.w > 8 && temp.h > 8 : Math.hypot(temp.x2 - temp.x1, temp.y2 - temp.y1) > 20);
-        if (c && ok) { snapshot(); setMarks([...c.marks, temp]); } else paint();
+        if (c && ok) { snapshot(); setMarks([...pageMarks(c), temp]); } else paint();
         temp = null;
       };
       svg.addEventListener('pointerup', end);
@@ -1085,7 +1278,15 @@ export function mountStudy(root, store, opts = {}) {
       right.appendChild(field('一句话结论（墙上会加粗显示）', take));
 
       const notesBox = el('div', 'st-pin-notes');
+      const pages = cardPages(c);
+      const pinAt = pinPages(c);
+      let lastPage = -1;
       for (const n of c.notes) {
+        const pi = pinAt.has(n.n) ? pinAt.get(n.n) : -1;
+        if (pages.length > 1 && pi >= 0 && pi !== lastPage) {
+          notesBox.appendChild(el('div', 'st-notes-grp', pageName(pages[pi], pi)));
+          lastPage = pi;
+        }
         const row = el('div', 'st-pin-note');
         const dot = el('span', 'st-dot', String(n.n));
         dot.style.background = pinColor(c, n.n);
@@ -1106,13 +1307,7 @@ export function mountStudy(root, store, opts = {}) {
         row.appendChild(ta);
         if (editable()) {
           const x = button('st-x', '×', `删除编号 ${n.n}`);
-          x.addEventListener('click', () => {
-            const cur = card();
-            if (!cur) return;
-            snapshot();
-            let k = 0;
-            setMarks(cur.marks.filter((m) => !(m.t === 'pin' && ++k === n.n)), cur.notes.filter((x2) => x2.n !== n.n));
-          });
+          x.addEventListener('click', () => deletePin(n.n));
           row.appendChild(x);
         }
         notesBox.appendChild(row);
@@ -1123,16 +1318,17 @@ export function mountStudy(root, store, opts = {}) {
       nf.appendChild(notesBox);
       right.appendChild(nf);
 
-      c.marks.forEach((m, i) => {
+      pageMarks(c).forEach((m, i) => {
         if (m.t !== 'hline') return;
         const inp = textInput('st-line-' + i, m.label || '', (v) => {
           const cur = card();
-          if (!cur || !cur.marks[i]) return;
-          const marks = cur.marks.slice();
+          if (!cur || !pageMarks(cur)[i]) return;
+          const marks = pageMarks(cur).slice();
           marks[i] = { ...marks[i], label: v };
-          update({ marks });
+          const ps = cardPages(cur);
+          if (ps.length) { ps[pageAt(cur)] = { ...ps[pageAt(cur)], marks }; savePages(ps); } else update({ marks });
           const svg = dlg.querySelector('.st-stage svg');
-          if (svg) drawMarks(svg, card().marks, local.selected);
+          if (svg) drawMarks(svg, pageMarks(card()), local.selected);
         }, { placeholder: '比如：颈线、前高' });
         right.appendChild(field('水平线的名字', inp));
       });
@@ -1276,14 +1472,12 @@ export function mountStudy(root, store, opts = {}) {
       if (!info.images.length) return;
       if (isTyping(e.target) && info.hasText) return;
       e.preventDefault();
-      const c = card();
-      if (c && c.img) { showToast('这张卡已经有图了：要换图点工具条上的「换图」'); return; }
-      putImage(info.images[0]);
+      putImage(info.images[0], 'new'); // 已经有图就加成下一张
     }
     function onDrop(e) {
       e.preventDefault();
       const info = readTransfer(e.dataTransfer);
-      if (info.images.length) putImage(info.images[0]);
+      if (info.images.length) putImage(info.images[0], 'new');
     }
     const onDragOver = (e) => { if (Array.from(e.dataTransfer ? e.dataTransfer.types : []).includes('Files')) e.preventDefault(); };
     let downOnWrap = false;
