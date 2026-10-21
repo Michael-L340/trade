@@ -1,9 +1,10 @@
-// 「学习」板块的界面：左边目录（主题 › 知识点），右边按知识点分段铺开学习卡；墙 / 分栏 / 对比三种看法；
+// 「学习」板块的界面：左边目录（主题 › 知识点），右边按主题分组、一个知识点一块（能收起成小方块）铺开学习卡；墙 / 分栏 / 对比三种看法；
 // 点卡片进编辑：图上画批注（编号点、框、箭头、水平线）、写结论和编号说明、选主题和知识点。
 //
 // mountStudy(root, store, opts) → { open(), close(), newCard(fields), openCard(id), destroy() }
 //   opts.shots = { addStudyImage(cardId, blob), urlCache }（main.js 绑好 ctx 的 shots.js 接口）
 //   opts.openTrade(tradeId)：卡片上「第 n 笔」点了去复盘打开那一笔
+//   opts.fold = { load(), save(keys) }：墙上收起了哪些知识点存哪（main.js 给本机 meta 存储，每台设备各记各的）
 //
 // 数据只通过 store.actions 改（addTopic、addItem、updateItem、addCard、updateCard、deleteCard……）。
 // 编辑框开着的时候，后面的卡片墙不跟着每个字重画，关掉时再画一次（不打断输入法、不反复要图片地址）。
@@ -35,6 +36,11 @@ const ICON = Object.freeze({
 });
 const TF_OPTIONS = Object.freeze(['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1']);
 const SOURCE_OPTIONS = Object.freeze(['自己的交易', '课程笔记', '书', '视频']);
+// 主题的识别色，按主题顺序轮流用；不用蓝和橙（网站里蓝橙代表赚和亏）
+const TOPIC_COLORS = Object.freeze(['#127C74', '#6046B8', '#9A6A12', '#A83A5E', '#55761F', '#3D6A8F']);
+const LOOSE_COLOR = '#5E6A85';
+const AUTO_ITEM = '未分类'; // 主题下还没有知识点时新建学习卡，自动建的知识点叫这个
+const FOLD_MAX = 1000;
 
 // ---------- 小工具 ----------
 
@@ -165,12 +171,14 @@ export const pageName = (page, i) => (page && page.img && page.img.label) || `�
 /**
  * @param {HTMLElement} root  #page-study
  * @param {ReturnType<import('../state.js').createStore>} store
- * @param {{shots?: {addStudyImage?: Function, urlCache?: object}, openTrade?: (id: string) => void}} [opts]
+ * @param {{shots?: {addStudyImage?: Function, urlCache?: object}, openTrade?: (id: string) => void,
+ *   fold?: {load: () => Promise<any>, save: (keys: string[]) => Promise<any>}}} [opts]
  */
 export function mountStudy(root, store, opts = {}) {
   const shots = opts.shots || {};
   const urls = shotUrls(shots.urlCache);
   const openTrade = typeof opts.openTrade === 'function' ? opts.openTrade : null;
+  const foldStore = opts.fold && typeof opts.fold.load === 'function' && typeof opts.fold.save === 'function' ? opts.fold : null;
 
   /** 界面状态（不进数据） */
   const view = {
@@ -183,6 +191,7 @@ export function mountStudy(root, store, opts = {}) {
     shown: new Map(), // 卡片 id → 墙上正在看第几张图
     sideOpen: true,
     folded: new Set(),
+    shut: new Set(), // 墙上收起来的知识点 id（未归类是 'loose'）
     adding: null, // 'topic' | 主题 id（正在这个主题下加知识点）
     editingNote: null, // 正在改要点的知识点 id
     renaming: null, // 正在改名的主题或知识点 id
@@ -261,6 +270,38 @@ export function mountStudy(root, store, opts = {}) {
   const countItem = (id) => st().cards.filter((c) => c.item === id).length;
   const countTopic = (t) => t.items.reduce((n, it) => n + countItem(it.id), 0);
   const looseCount = () => st().cards.filter(isLoose).length;
+  const topicColor = (topic) => {
+    const i = st().topics.findIndex((t) => t.id === topic.id);
+    return i < 0 ? LOOSE_COLOR : TOPIC_COLORS[i % TOPIC_COLORS.length];
+  };
+  function swatch(color) {
+    const sw = el('i', 'st-sw');
+    sw.style.background = color;
+    sw.setAttribute('aria-hidden', 'true');
+    return sw;
+  }
+
+  // ---------- 收起 ----------
+  /** 墙上这一页能收起的块：知识点 id，未归类是 'loose' */
+  function foldKeys() {
+    if (view.scope === 'loose') return ['loose'];
+    const keys = itemsInScope().map((x) => x.item.id);
+    if (view.scope === 'all' && looseCount()) keys.push('loose');
+    return keys;
+  }
+  /** 收起状态存到本机（只读的标签页存不进去，这次照样生效） */
+  function saveFold() {
+    if (!foldStore) return;
+    const keys = Array.from(view.shut).slice(-FOLD_MAX);
+    Promise.resolve().then(() => foldStore.save(keys)).catch(() => {});
+  }
+  function toggleFold(key) {
+    if (view.shut.has(key)) view.shut.delete(key); else view.shut.add(key);
+    saveFold();
+    render();
+    const f = document.getElementById('st-fold-' + key);
+    if (f) f.focus({ preventScroll: true });
+  }
 
   // ---------- 画整页 ----------
   function render() {
@@ -321,8 +362,9 @@ export function mountStudy(root, store, opts = {}) {
     return b;
   }
 
-  function navBtn(cls, text, count, current, onClick) {
+  function navBtn(cls, text, count, current, onClick, color) {
     const b = button(cls);
+    if (color) b.appendChild(swatch(color));
     b.appendChild(el('span', 'st-nav-name', text));
     b.appendChild(el('span', 'st-n', String(count)));
     b.setAttribute('aria-current', current ? 'true' : 'false');
@@ -353,7 +395,7 @@ export function mountStudy(root, store, opts = {}) {
         if (c) c.focus();
       });
       row.appendChild(caret);
-      row.appendChild(navBtn('st-topic', topic.name, countTopic(topic), view.scope === topic.id, () => pick(topic.id)));
+      row.appendChild(navBtn('st-topic', topic.name, countTopic(topic), view.scope === topic.id, () => pick(topic.id), topicColor(topic)));
       side.appendChild(row);
       if (!open) continue;
       for (const item of topic.items) side.appendChild(navBtn('st-item', item.name, countItem(item.id), view.scope === item.id, () => pick(item.id)));
@@ -417,15 +459,17 @@ export function mountStudy(root, store, opts = {}) {
     const s = st();
     const wrap = el('div', 'st-phone-nav');
     const row1 = el('div', 'st-chips');
-    const chip = (text, current, onClick) => {
-      const b = button('st-chip', text);
+    const chip = (text, current, onClick, color) => {
+      const b = button('st-chip');
+      if (color) b.appendChild(swatch(color));
+      b.appendChild(document.createTextNode(text));
       b.setAttribute('aria-pressed', String(current));
       b.addEventListener('click', onClick);
       return b;
     };
     const curTopic = s.topics.find((t) => t.id === view.scope || t.items.some((it) => it.id === view.scope));
     row1.appendChild(chip('全部', view.scope === 'all', () => pick('all')));
-    for (const t of s.topics) row1.appendChild(chip(t.name, curTopic === t, () => pick(t.id)));
+    for (const t of s.topics) row1.appendChild(chip(t.name, curTopic === t, () => pick(t.id), topicColor(t)));
     if (looseCount()) row1.appendChild(chip('未归类', view.scope === 'loose', () => pick('loose')));
     wrap.appendChild(row1);
     if (curTopic && curTopic.items.length) {
@@ -440,7 +484,9 @@ export function mountStudy(root, store, opts = {}) {
   // ---------- 标题行：当前看的是什么，改名、删除 ----------
   function headEl() {
     const s = st();
-    const head = el('div', 'st-head');
+    const row = el('div', 'st-head');
+    const head = el('div', 'st-head-l');
+    row.appendChild(head);
     if (!view.sideOpen) head.appendChild(sideToggle(false));
     const topic = s.topics.find((t) => t.id === view.scope);
     const where = findItem(s, view.scope);
@@ -484,7 +530,7 @@ export function mountStudy(root, store, opts = {}) {
     const subs = itemsInScope();
     const cards = cardsInScope();
     const count = view.scope === 'loose' ? `${cards.length} 张卡` : `${target && target.kind === 'item' ? '' : subs.length + ' 个知识点 · '}${cards.length} 张卡`;
-    head.appendChild(el('span', 'st-count', count));
+    head.appendChild(el('span', 'st-head-meta', count));
     if (target && canEdit() && view.renaming !== target.id) {
       const ren = button('btn link st-mini', '改名');
       ren.addEventListener('click', () => { view.renaming = target.id; render(); });
@@ -493,7 +539,12 @@ export function mountStudy(root, store, opts = {}) {
       head.appendChild(ren);
       head.appendChild(del);
     }
-    return head;
+    if (canEdit()) {
+      const add = button('btn primary st-new', '＋ 新建学习卡');
+      add.addEventListener('click', () => newCard());
+      row.appendChild(add);
+    }
+    return row;
   }
 
   async function deleteTarget(target) {
@@ -535,8 +586,8 @@ export function mountStudy(root, store, opts = {}) {
 
   // ---------- 工具条 ----------
   function barEl() {
-    const bar = el('div', 'st-bar');
-    const seg = el('div', 'st-seg');
+    const bar = el('div', 'st-tb');
+    const seg = el('div', 'st-views');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', '看法');
     for (const [m, t] of [['wall', '墙'], ['cols', '分栏'], ['compare', `对比（${view.compare.size}）`]]) {
@@ -577,10 +628,19 @@ export function mountStudy(root, store, opts = {}) {
     }
     kind.addEventListener('change', () => { view.kind = kind.value; render(); });
     bar.appendChild(kind);
-    if (canEdit()) {
-      const add = button('btn primary', '＋ 新建学习卡');
-      add.addEventListener('click', () => newCard());
-      bar.appendChild(add);
+    const keys = view.mode === 'wall' ? foldKeys() : [];
+    if (keys.length) {
+      const allShut = keys.every((k) => view.shut.has(k));
+      const fa = button('st-foldall' + (allShut ? '' : ' up'));
+      fa.id = 'st-foldall';
+      fa.appendChild(caretIcon());
+      fa.appendChild(el('span', null, allShut ? '全部展开' : '全部收起'));
+      fa.addEventListener('click', () => {
+        for (const k of keys) { if (allShut) view.shut.delete(k); else view.shut.add(k); }
+        saveFold();
+        render();
+      });
+      bar.appendChild(fa);
     }
     return bar;
   }
@@ -628,7 +688,7 @@ export function mountStudy(root, store, opts = {}) {
     const extra = [cmp];
     if (pages.length > 1) {
       if (big && pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 对比里才写标签；没起标签不写「第 n 张」
-      extra.push(el('span', 'st-count', `${k + 1}/${pages.length}`));
+      extra.push(el('span', 'st-pgn', `${k + 1}/${pages.length}`));
       for (const [d, cls, text, label] of [[-1, 'prev', '‹', '上一张图'], [1, 'next', '›', '下一张图']]) {
         const b = button('st-flip ' + cls, text, label);
         b.addEventListener('click', (e) => {
@@ -696,9 +756,9 @@ export function mountStudy(root, store, opts = {}) {
     return art;
   }
 
+  /** 知识点名字下面的要点；「改要点」点了就地改 */
   function pointsEl(item) {
-    const box = el('div', 'st-points');
-    box.appendChild(el('b', null, '要点'));
+    const box = el('div', 'st-kp-pt');
     if (view.editingNote === item.id) {
       const ta = el('textarea');
       ta.id = 'st-note-' + item.id;
@@ -724,9 +784,9 @@ export function mountStudy(root, store, opts = {}) {
       box.appendChild(ta);
       setTimeout(() => ta.focus(), 0);
     } else {
-      box.appendChild(el('span', item.note ? null : 'st-muted', item.note || '还没写。点右边「改」写下这个知识点的规则。'));
+      box.appendChild(el('span', item.note ? null : 'st-muted', item.note || '还没写要点。'));
       if (canEdit()) {
-        const b = button('btn link st-mini', '改', `改「${item.name}」的要点`);
+        const b = button('btn link st-mini', '改要点', `改「${item.name}」的要点`);
         b.addEventListener('click', () => { view.editingNote = item.id; render(); });
         box.appendChild(b);
       }
@@ -734,47 +794,99 @@ export function mountStudy(root, store, opts = {}) {
     return box;
   }
 
+  /** 墙：「全部」按主题分组；每个知识点一块，收起的并排成小方块，展开的占满一行 */
   function wallEl(content) {
+    const s = st();
+    const topic = s.topics.find((t) => t.id === view.scope);
+    if (topic && !topic.items.length) {
+      const box = el('div', 'st-empty');
+      box.appendChild(el('b', null, `「${topic.name}」下面还没有知识点`));
+      if (canEdit()) box.appendChild(el('span', null, `直接点右上角「＋ 新建学习卡」，卡会先放进自动建的「${AUTO_ITEM}」，以后再挪；也可以点「＋ 知识点」自己起名。`));
+      content.appendChild(box);
+      return;
+    }
     const shown = cardsInScope();
-    if (view.scope === 'loose') {
-      content.appendChild(sectionEl(null, null, shown));
-      return;
-    }
-    const subs = itemsInScope();
-    if (!subs.length && view.scope !== 'all') {
-      content.appendChild(el('div', 'st-empty', '这个主题下还没有知识点。点左边的「＋ 知识点」加一个。'));
-      return;
-    }
-    let any = false;
-    for (const { topic, item } of subs) {
-      const list = shown.filter((c) => c.item === item.id);
-      if ((view.q || view.symbol || view.kind) && !list.length) continue;
-      any = true;
-      content.appendChild(sectionEl(topic, item, list));
-    }
+    const narrow = !!(view.q.trim() || view.symbol || view.kind); // 搜索、筛选时没有符合的知识点就不显示
+    const listOf = (id) => shown.filter((c) => c.item === id);
+    const groups = el('div', 'st-groups');
+    const topicHead = (color, name, meta) => {
+      const h = el('div', 'st-tp-head');
+      h.appendChild(swatch(color));
+      h.appendChild(el('h3', null, name));
+      h.appendChild(el('span', 'st-tp-meta', meta));
+      return h;
+    };
     if (view.scope === 'all') {
+      for (const t of s.topics) {
+        const items = t.items.filter((it) => !narrow || listOf(it.id).length);
+        if (narrow && !items.length) continue;
+        const sec = el('section', 'st-tp');
+        sec.appendChild(topicHead(topicColor(t), t.name, t.items.length ? `${t.items.length} 个知识点 · ${countTopic(t)} 张` : '还没有知识点'));
+        if (items.length) {
+          const grid = el('div', 'st-kps');
+          for (const it of items) grid.appendChild(kpEl(it.id, it, listOf(it.id)));
+          sec.appendChild(grid);
+        }
+        groups.appendChild(sec);
+      }
       const loose = shown.filter(isLoose);
-      if (loose.length) { any = true; content.appendChild(sectionEl(null, null, loose)); }
+      if (loose.length) {
+        const sec = el('section', 'st-tp');
+        sec.appendChild(topicHead(LOOSE_COLOR, '未归类', `不属于任何主题 · ${loose.length} 张`));
+        const grid = el('div', 'st-kps');
+        grid.appendChild(kpEl('loose', null, loose));
+        sec.appendChild(grid);
+        groups.appendChild(sec);
+      }
+    } else {
+      const grid = el('div', 'st-kps');
+      if (view.scope === 'loose') {
+        if (!narrow || shown.length) grid.appendChild(kpEl('loose', null, shown));
+      } else {
+        for (const { item } of itemsInScope()) {
+          const list = listOf(item.id);
+          if (!narrow || list.length) grid.appendChild(kpEl(item.id, item, list));
+        }
+      }
+      if (grid.firstChild) groups.appendChild(grid);
     }
-    if (!any) content.appendChild(el('div', 'st-empty', '没有符合条件的学习卡。'));
+    if (!groups.firstChild) {
+      content.appendChild(el('div', 'st-empty', narrow ? '没有符合条件的学习卡。' : '这里还没有知识点。'));
+      return;
+    }
+    content.appendChild(groups);
   }
 
-  function sectionEl(topic, item, list) {
-    const sec = el('section', 'st-sect');
-    const head = el('div', 'st-sect-head');
-    head.appendChild(el('h3', null, item ? item.name : '未归类'));
-    if (topic && (view.scope === 'all')) head.appendChild(el('span', 'st-sect-topic', topic.name));
-    head.appendChild(el('span', 'st-count', list.length + ' 张'));
-    sec.appendChild(head);
-    if (item) sec.appendChild(pointsEl(item));
-    if (list.length) {
-      const wall = el('div', 'st-wall');
-      for (const c of list) wall.appendChild(cardEl(c));
-      sec.appendChild(wall);
-    } else {
-      sec.appendChild(el('p', 'st-muted', '还没有卡片。点上面的「＋ 新建学习卡」，或者在复盘的截图下面点「收进学习」。'));
+  /** 一个知识点（或未归类）：收起时只剩名字、张数和一行卡片标题，点名字展开 */
+  function kpEl(key, item, list) {
+    const open = !view.shut.has(key);
+    const name = item ? item.name : '还没归类的卡';
+    const box = el('article', 'st-kp' + (open ? ' open' : ''));
+    const head = el('div', 'st-kp-head');
+    const fold = button('st-fold', null, `${open ? '收起' : '展开'}「${name}」`);
+    fold.id = 'st-fold-' + key;
+    fold.setAttribute('aria-expanded', String(open));
+    fold.appendChild(caretIcon());
+    head.appendChild(fold);
+    head.appendChild(el('h4', null, name));
+    head.appendChild(el('span', 'st-kp-n', list.length + ' 张'));
+    head.addEventListener('click', () => toggleFold(key));
+    box.appendChild(head);
+    if (!open) {
+      const peek = el('div', 'st-kp-peek', list.length ? list.slice(0, 8).map((c) => c.title || '（还没写标题）').join(' · ') : '还没有卡片');
+      peek.addEventListener('click', () => toggleFold(key));
+      box.appendChild(peek);
+      return box;
     }
-    return sec;
+    box.appendChild(item ? pointsEl(item) : el('div', 'st-kp-pt st-muted', '还没放进任何知识点的卡。'));
+    if (list.length) {
+      const wall = el('div', 'st-kp-cards');
+      for (const c of list) wall.appendChild(cardEl(c));
+      box.appendChild(wall);
+    } else {
+      box.appendChild(el('p', 'st-kp-empty', '还没有卡片。点上面的「＋ 新建学习卡」，或者在复盘的截图下面点「收进学习」。'));
+    }
+    return box;
   }
 
   function colsEl() {
@@ -822,21 +934,30 @@ export function mountStudy(root, store, opts = {}) {
   }
 
   // ---------- 新建、打开学习卡 ----------
-  /** 默认放进现在看的知识点；看的是主题就放进它的第一个知识点 */
+  /**
+   * 默认放进现在看的知识点；看的是主题就放进它的第一个知识点；
+   * 这个主题下还没有知识点，就自动建一个「未分类」放进去（made 是主题名，用来提示）
+   */
   function defaultItem() {
     const s = st();
-    if (findItem(s, view.scope)) return view.scope;
+    if (findItem(s, view.scope)) return { item: view.scope };
     const tp = s.topics.find((t) => t.id === view.scope);
-    return tp && tp.items.length ? tp.items[0].id : '';
+    if (!tp) return { item: '' };
+    if (tp.items.length) return { item: tp.items[0].id };
+    const id = store.actions.addItem(tp.id, AUTO_ITEM);
+    return { item: id || '', made: id ? tp.name : null };
   }
 
   function newCard(fields = {}) {
     if (!canEdit()) { readOnlyHint(); return null; }
-    const id = store.actions.addCard({ item: defaultItem(), ...fields });
+    const def = fields.item === undefined ? defaultItem() : { item: fields.item };
+    const id = store.actions.addCard({ ...fields, item: def.item });
     if (!id) return null;
+    if (view.shut.delete(def.item || 'loose')) saveFold(); // 放进收起的那块：自动展开
     view.mode = 'wall';
     render();
     openCard(id);
+    if (def.made) showToast(`「${def.made}」还没有知识点，新卡放进了自动建的「${AUTO_ITEM}」`);
     return id;
   }
 
@@ -1826,6 +1947,14 @@ export function mountStudy(root, store, opts = {}) {
         if (prevFocus && prevFocus.isConnected && !root.contains(prevFocus)) prevFocus.focus({ preventScroll: true });
       },
     };
+  }
+
+  if (foldStore) {
+    Promise.resolve().then(() => foldStore.load()).then((raw) => {
+      if (!Array.isArray(raw)) return;
+      for (const k of raw) if (typeof k === 'string') view.shut.add(k);
+      if (editor) stale = true; else render();
+    }).catch(() => {});
   }
 
   // ---------- 数据变了 ----------

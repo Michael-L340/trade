@@ -197,6 +197,7 @@ async function boot() {
       location.hash = '#/';
       queueMicrotask(() => detail.open(tradeId));
     },
+    fold: { load: () => db.loadMeta('studyFold'), save: (keys) => db.saveMeta('studyFold', keys) }, // 收起了哪些知识点，每台设备各记各的
   });
   /**
    * 复盘详情里勾了几张截图「收进学习」：去学习页，用这几张新建一张学习卡（按顺序放，标签跟着带过去；
