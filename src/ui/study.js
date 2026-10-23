@@ -10,7 +10,7 @@
 // 编辑框开着的时候，后面的卡片墙不跟着每个字重画，关掉时再画一次（不打断输入法、不反复要图片地址）。
 // 全部用 createElement / textContent，不拼 HTML；颜色、位置用 element.style 或 SVG 属性（页面有内容安全策略）。
 
-import { MARK_W, MARK_H, MARK_COLORS, MARK_SIZE_MAX, MARK_SIZE_MIN, MAX_PAGES, cardPages, findItem, isDashed, pagesPatch, LONG_MAX, SHORT_MAX } from '../study.js';
+import { MARK_W, MARK_H, MARK_COLORS, MARK_SIZE_MAX, MARK_SIZE_MIN, MAX_PAGES, cardPages, coverIndex, findItem, isDashed, pagesPatch, withCover, LONG_MAX, SHORT_MAX } from '../study.js';
 import { confirmDialog, showToast } from './toast.js';
 import { errorText, readTransfer, readOnlyMessage, shotUrls } from './sheet.js';
 
@@ -188,7 +188,7 @@ export function mountStudy(root, store, opts = {}) {
     symbol: '',
     kind: '',
     compare: new Set(),
-    shown: new Map(), // 卡片 id → 墙上正在看第几张图
+    shown: new Map(), // 卡片 id → 墙上翻到了第几张图（没翻过就显示封面）
     sideOpen: true,
     folded: new Set(),
     shut: new Set(), // 墙上收起来的知识点 id（未归类是 'loose'）
@@ -683,8 +683,8 @@ export function mountStudy(root, store, opts = {}) {
     }
     // 好几张图：卡片上只放一张大图，右下角 1/3；鼠标移到图上左右出现 ‹ › 翻页（只换这张卡显示哪张，不进数据）
     const pages = cardPages(card);
-    let k = view.shown.get(card.id) || 0;
-    if (k >= pages.length) k = 0;
+    let k = view.shown.has(card.id) ? view.shown.get(card.id) : coverIndex(card);
+    if (!(k >= 0 && k < pages.length)) k = coverIndex(card);
     const extra = [cmp];
     if (pages.length > 1) {
       if (big && pages[k].img.label) extra.push(el('span', 'st-cap', pages[k].img.label)); // 对比里才写标签；没起标签不写「第 n 张」
@@ -870,6 +870,12 @@ export function mountStudy(root, store, opts = {}) {
     head.appendChild(fold);
     head.appendChild(el('h4', null, name));
     head.appendChild(el('span', 'st-kp-n', list.length + ' 张'));
+    if (canEdit()) {
+      const add = button('st-kp-add', '＋', item ? `在「${item.name}」里新建学习卡` : '新建一张未归类的学习卡');
+      add.title = add.getAttribute('aria-label');
+      add.addEventListener('click', (e) => { e.stopPropagation(); newCard({ item: item ? item.id : '' }); });
+      head.appendChild(add);
+    }
     head.addEventListener('click', () => toggleFold(key));
     box.appendChild(head);
     if (!open) {
@@ -976,7 +982,7 @@ export function mountStudy(root, store, opts = {}) {
     if (!editor) return;
     const ed = editor;
     editor = null;
-    view.shown.set(ed.id, ed.page()); // 墙上停在最后编辑的那张图
+    view.shown.delete(ed.id); // 关掉后墙上回到封面
     ed.destroy();
     render();
     const back = Array.from(root.querySelectorAll('.st-card')).find((n) => n.dataset.id === ed.id);
@@ -986,7 +992,7 @@ export function mountStudy(root, store, opts = {}) {
   function createEditor(cardId) {
     // 从墙上点进来：墙上翻到第几张图，就打开第几张
     // 打开时是鼠标（tool 为 null）：点图只选中、拖动，不画；点一下工具开始画，再点一下回到鼠标
-    const local = { tool: null, color: 'red', selected: -1, undo: [], busy: false, page: view.shown.get(cardId) || 0, target: 0 };
+    const local = { tool: null, color: 'red', selected: -1, undo: [], busy: false, page: view.shown.has(cardId) ? view.shown.get(cardId) : coverIndex(st().cards.find((c) => c.id === cardId)), target: 0 };
     let edHeld = [];
     const wrap = el('div', 'st-ed-wrap');
     const dlg = el('div', 'st-ed');
@@ -1316,6 +1322,7 @@ export function mountStudy(root, store, opts = {}) {
           b.id = 'st-pg-' + i;
           b.setAttribute('aria-pressed', String(i === cur));
           if (editable() && pages.length > 1) b.title = '点一下编辑这张；按住拖动换顺序';
+          if (pages.length > 1 && i === coverIndex(c)) b.appendChild(el('b', 'st-cover-tag', '封面'));
           b.appendChild(shotBox(c, { page: i }));
           b.appendChild(el('span', null, pageName(p, i)));
           b.addEventListener('click', () => {
@@ -1436,6 +1443,20 @@ export function mountStudy(root, store, opts = {}) {
         const rm = button('btn', '删除这张图');
         rm.addEventListener('click', () => removePage(cur));
         moves.append(rp, rm);
+        if (pages.length > 1) {
+          const isCover = cur === coverIndex(c);
+          const cv = button('btn', isCover ? '已是封面' : '设为封面');
+          cv.id = 'st-pg-cover';
+          cv.disabled = isCover;
+          cv.title = '卡片墙上显示这一张';
+          cv.addEventListener('click', () => {
+            const now = card();
+            if (!now || !savePages(withCover(cardPages(now), cur))) return;
+            paint(); // 自己改的卡片不会触发编辑框重画（只有别处改了才会），这里自己画
+            showToast(`墙上会显示${pageName(pages[cur], cur)}`);
+          });
+          moves.append(cv);
+        }
         row.appendChild(moves);
         left.appendChild(row);
       } else if (pages[cur].img.label) left.appendChild(el('p', 'st-hint', '这张图：' + pages[cur].img.label));
@@ -1974,6 +1995,7 @@ export function mountStudy(root, store, opts = {}) {
     /** 离开学习页 */
     close() {
       if (editor) closeEditor();
+      view.shown.clear(); // 墙上翻过的图，下次进来回到封面
       visible = false;
       releaseHeld(held);
       held = [];

@@ -6,11 +6,12 @@
 //   cards:  [{ id: 'c_…', item: 'kp_…' 或 ''（未归类）, title, kind: 'good'|'bad', symbol, tf, source,
 //             trade: 't_…' 或 null（从复盘收进来的那一笔）, take（一句话结论）,
 //             memo?（整张卡的批注，编辑框右边写，可以没有）,
-//             img: null 或 { file, thumb?, width?, height?, bytes?, label? }, marks: [批注],
+//             img: null 或 { file, thumb?, width?, height?, bytes?, label?, cover? }, marks: [批注],
 //             more?: [{ img: {同上}, marks: [批注] }]（第 2 张起的图，按顺序；没有就不写这个键），
 //             notes: [{ n, text }], createdAt, updatedAt }]
 // }
 // 一张卡可以有好几张图：第一张是 img + marks（和只有一张图时完全一样，旧数据不用改），后面的放在 more 里。
+// img.cover 只能是 true：卡片墙上显示这一张（封面）；一张卡最多一张有，都没有就显示第一张。换顺序时跟着图走，删了就回到第一张。
 // img.label 是这张图的标签（开仓时 / 持仓中 / 平仓后 / 自己写的字），可以没有。编号点在整张卡里连着编：
 // 第一张的编号点在前，然后是 more 里一张一张往后排；notes 只有一份，和这些编号点一一对应。
 // 卡片在数组里的先后就是显示的先后（新卡放最前面）。知识点被删掉后，引用它的卡片不会悬空：删知识点时一起删掉
@@ -140,6 +141,7 @@ export function validateStudy(study) {
           if (img[f] !== undefined && !(isNum(img[f]) && img[f] >= 0)) bad(c.id, `${w}的 ${f} 必须是不小于 0 的数字`);
         }
         if (img.label !== undefined && typeof img.label !== 'string') bad(c.id, w + '的标签必须是字符串');
+        if (img.cover !== undefined && img.cover !== true) bad(c.id, w + '的 cover（封面）只能是 true');
       };
       const checkMarks = (marks, w) => {
         if (!Array.isArray(marks)) bad(c.id, w + '的 marks（批注）必须是数组');
@@ -279,6 +281,7 @@ export function sanitizeImg(v) {
   for (const f of ['width', 'height', 'bytes']) if (isNum(v[f]) && v[f] >= 0) img[f] = v[f];
   const label = typeof v.label === 'string' ? cut(v.label.replace(/\s+/g, ' ').trim(), SHORT_MAX) : '';
   if (label) img.label = label;
+  if (v.cover === true) img.cover = true;
   return img;
 }
 
@@ -357,6 +360,21 @@ export function cardPages(card) {
     for (const p of card.more) if (isPlainObject(p) && isPlainObject(p.img)) pages.push({ img: p.img, marks: Array.isArray(p.marks) ? p.marks : [] });
   }
   return pages;
+}
+
+/** 卡片墙上显示第几张图：标了 cover 的那张（有好几张标了取第一张），都没标就是第一张 */
+export function coverIndex(card) {
+  const i = cardPages(card).findIndex((p) => p.img.cover === true);
+  return i < 0 ? 0 : i;
+}
+
+/** 把第 i 张设为封面：只在这张图上写 cover: true，别的图去掉 */
+export function withCover(pages, i) {
+  return pages.map((p, k) => {
+    const img = { ...p.img };
+    if (k === i) img.cover = true; else delete img.cover;
+    return { ...p, img };
+  });
 }
 
 /** cardPages 的反过来：几张图 → 卡片上的 img、marks、more（没有第 2 张起的图时 more 是空数组，state 会把这个键去掉） */

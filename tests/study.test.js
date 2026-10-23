@@ -5,7 +5,7 @@ import { createStore } from '../src/state.js';
 import { validateJournal, normalizeJournal, serialize, isoNow } from '../src/model.js';
 import {
   validateStudy, sanitizeMark, sanitizeCardPatch, renumberPins, cleanName, isImgPath, studyFiles, findItem, SHORT_MAX,
-  renumberAll, cardPages, pagesPatch, cardFiles, MAX_PAGES,
+  renumberAll, cardPages, pagesPatch, cardFiles, MAX_PAGES, coverIndex, withCover,
 } from '../src/study.js';
 
 const NOW = () => new Date(2026, 9, 14, 10, 0, 0);
@@ -263,6 +263,31 @@ test('整张卡的批注 memo：留着（截到 LONG_MAX）、不是字符串要
   assert.equal(a.updateCard(id, { memo: '改了' }), true);
   const text = serialize(store.get().journal);
   assert.match(text, /"take":"结论","memo":"改了","img":null/);
+  assert.equal(serialize(JSON.parse(text)), text);
+  assert.deepEqual(validateJournal(JSON.parse(text)), []);
+});
+
+test('封面 img.cover：只留 true；墙上显示标了的那张，没标是第一张；设封面只留一张；换顺序跟着图走；格式在 label 后面', () => {
+  assert.equal(sanitizeCardPatch({ img: { ...IMG(1), cover: true } }).patch.img.cover, true);
+  assert.equal('cover' in sanitizeCardPatch({ img: { ...IMG(1), cover: 'yes' } }).patch.img, false);
+  const base = { id: 'c_1', item: '', title: '', kind: 'good', symbol: '', tf: '', source: '', trade: null, take: '', img: IMG(1), marks: [], notes: [] };
+  assert.match(validateStudy({ cards: [{ ...base, img: { ...IMG(1), cover: 1 } }] }).map((e) => e.message).join(), /cover（封面）只能是 true/);
+  const card = { ...base, more: [{ img: IMG(2, '持仓中'), marks: [] }, { img: IMG(3), marks: [] }] };
+  assert.equal(coverIndex(card), 0, '没标就是第一张');
+  assert.equal(coverIndex(null), 0);
+  const pages = withCover(cardPages(card), 1);
+  assert.deepEqual(pages.map((p) => p.img.cover === true), [false, true, false]);
+  const set = { ...card, ...pagesPatch(pages) };
+  assert.equal(coverIndex(set), 1);
+  assert.deepEqual(withCover(cardPages(set), 2).map((p) => p.img.cover === true), [false, false, true], '只留一张');
+  const moved = cardPages(set); moved.unshift(moved.splice(1, 1)[0]);
+  assert.equal(coverIndex({ ...set, ...pagesPatch(moved) }), 0, '换顺序封面跟着图走');
+  assert.equal(coverIndex({ ...set, ...pagesPatch(cardPages(set).filter((_, k) => k !== 1)) }), 0, '删了封面回到第一张');
+  const { a, st, store } = setup();
+  const id = a.addCard({ img: IMG(1), more: [{ img: { ...IMG(2, '持仓中'), cover: true }, marks: [] }] });
+  assert.equal(coverIndex(st().cards.find((c) => c.id === id)), 1);
+  const text = serialize(store.get().journal);
+  assert.match(text, /"label":"持仓中","cover":true\}/);
   assert.equal(serialize(JSON.parse(text)), text);
   assert.deepEqual(validateJournal(JSON.parse(text)), []);
 });

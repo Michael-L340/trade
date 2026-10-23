@@ -460,7 +460,7 @@ export function setShotLabel(ctx, tradeId, shotId, text) {
 
 /**
  * 给学习卡放一张图（换图、加图都走这里）：压缩 → 写两个文件 shots/<卡片 id>/<图片 id>.webp 和 .thumb.webp →
- * 改卡片的图。opts.page 是数字时换掉第几张（从 0 数，标签留着）；是 'new' 时加在最后。
+ * 改卡片的图。opts.page 是数字时换掉第几张（从 0 数，标签和封面留着）；是 'new' 时加在最后。
  * 不传时：卡片还没有图就放成第一张，有图就换第一张（以前一张卡只有一张图时的做法）。
  * 被换掉的图如果别处（交易截图、别的卡片）不再引用，就删掉它的本机文件。
  * 换了图，原来画的批注留着（坐标是按 16:9 画布算的，用户自己决定要不要清掉）。
@@ -512,6 +512,7 @@ export async function addStudyImage(ctx, cardId, blob, opts = {}) {
       pages.push({ img: next, marks: [] });
     } else {
       if (pages[page].img.label) next.label = pages[page].img.label;
+      if (pages[page].img.cover === true) next.cover = true; // 换的是封面，换完还是封面
       pages[page] = { ...pages[page], img: next };
     }
     if (!c.store.actions.updateCard(cardId, pagesPatch(pages))) throw new ShotError('NO_TRADE', '这张学习卡现在改不了，图没有保存');

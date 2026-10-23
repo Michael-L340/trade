@@ -370,7 +370,7 @@ function studyDoc() {
       { id: 'c_3', item: '', title: '只有文字', kind: 'bad', symbol: '', tf: '', source: '', trade: null, take: '规则', img: null, marks: [], notes: [] },
       { id: 'c_4', item: '', title: '好几张图', kind: 'good', symbol: '', tf: '', source: '', trade: 't_1', take: '',
         img: { file: 'shots/t_1/sh_1.webp', thumb: 'shots/t_1/sh_1.thumb.webp', label: '开仓时' }, marks: [],
-        more: [{ img: { file: 'shots/c_4/im_2.webp', thumb: 'shots/c_4/im_2.thumb.webp', bytes: 4, label: '平仓后' }, marks: [] }], notes: [] },
+        more: [{ img: { cover: true, file: 'shots/c_4/im_2.webp', thumb: 'shots/c_4/im_2.thumb.webp', bytes: 4, label: '平仓后' }, marks: [] }], notes: [] },
     ],
   };
   return doc;
