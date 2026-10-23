@@ -194,7 +194,7 @@ export function mountStudy(root, store, opts = {}) {
     shut: new Set(), // 墙上收起来的知识点 id（未归类是 'loose'）
     adding: null, // 'topic' | 主题 id（正在这个主题下加知识点）
     editingNote: null, // 正在改要点的知识点 id
-    renaming: null, // 正在改名的主题或知识点 id
+    renaming: null, // 正在改名的主题或知识点 id；墙上知识点标题里改名的是 'kp:' + id
   };
   let visible = false;
   let stale = true; // 数据变了还没重画
@@ -500,30 +500,7 @@ export function mountStudy(root, store, opts = {}) {
       titleText = where.item.name;
     }
     if (target && view.renaming === target.id) {
-      const inp = el('input', 'st-rename');
-      inp.id = 'st-rename';
-      inp.value = target.name;
-      inp.maxLength = SHORT_MAX;
-      inp.setAttribute('aria-label', '新名字，回车保存');
-      let done = false;
-      const finish = (save) => {
-        if (done) return;
-        done = true;
-        view.renaming = null;
-        if (save) {
-          if (target.kind === 'topic') store.actions.renameTopic(target.id, inp.value);
-          else store.actions.updateItem(target.id, { name: inp.value });
-        }
-        render();
-      };
-      inp.addEventListener('keydown', (e) => {
-        if (e.isComposing || e.keyCode === 229) return;
-        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-      });
-      inp.addEventListener('blur', () => finish(true));
-      head.appendChild(inp);
-      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+      head.appendChild(renameInput(target));
     } else {
       head.appendChild(el('h2', 'st-title', titleText));
     }
@@ -545,6 +522,35 @@ export function mountStudy(root, store, opts = {}) {
       row.appendChild(add);
     }
     return row;
+  }
+
+  /** 改名输入框：回车或点别处保存，Esc 取消 */
+  function renameInput(target, cls = 'st-rename') {
+    const inp = el('input', cls);
+    inp.id = 'st-rename';
+    inp.value = target.name;
+    inp.maxLength = SHORT_MAX;
+    inp.setAttribute('aria-label', '新名字，回车保存');
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      view.renaming = null;
+      if (save) {
+        if (target.kind === 'topic') store.actions.renameTopic(target.id, inp.value);
+        else store.actions.updateItem(target.id, { name: inp.value });
+      }
+      render();
+    };
+    inp.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true));
+    inp.addEventListener('click', (e) => e.stopPropagation()); // 墙上的知识点标题：点输入框别收起
+    setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    return inp;
   }
 
   async function deleteTarget(target) {
@@ -868,7 +874,15 @@ export function mountStudy(root, store, opts = {}) {
     fold.setAttribute('aria-expanded', String(open));
     fold.appendChild(caretIcon());
     head.appendChild(fold);
-    head.appendChild(el('h4', null, name));
+    if (item && view.renaming === 'kp:' + item.id) head.appendChild(renameInput({ kind: 'item', id: item.id, name: item.name }, 'st-rename st-kp-rename'));
+    else {
+      head.appendChild(el('h4', null, name));
+      if (item && canEdit() && view.scope !== item.id) { // 点进这个知识点时标题行已经有「改名」
+        const ren = button('btn link st-mini st-kp-ren', '改名', `给「${item.name}」改名`);
+        ren.addEventListener('click', (e) => { e.stopPropagation(); view.renaming = 'kp:' + item.id; render(); });
+        head.appendChild(ren);
+      }
+    }
     head.appendChild(el('span', 'st-kp-n', list.length + ' 张'));
     if (canEdit()) {
       const add = button('st-kp-add', '＋', item ? `在「${item.name}」里新建学习卡` : '新建一张未归类的学习卡');
