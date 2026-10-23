@@ -617,8 +617,9 @@ a.btn { display: inline-flex; align-items: center; color: var(--ink); text-decor
 .st-kp-n { margin-left: auto; font: 600 11.5px/20px var(--font-num); color: var(--ink-2); background: var(--head); padding: 0 7px; flex: none; white-space: nowrap; }
 .st-kp-add { width: 28px; height: 28px; flex: none; border: 1px solid var(--line-2); background: var(--surface); color: var(--accent); font-size: 18px; line-height: 1; padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .st-kp-add:hover { background: var(--sel); border-color: var(--accent); }
-.st-kp-ren { flex: none; }
-.st-kp-rename { height: 30px; font-size: 16px; flex: 1; width: 0; max-width: 320px; }
+.st-manage { display: inline-flex; flex: none; }
+.st-manage .btn.link { padding: 0 5px; }
+.st-wall-rename { height: 30px; font-size: 16px; flex: 1; width: 0; max-width: 320px; }
 .st-kp-peek { padding: 0 14px 12px 44px; margin-top: -6px; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .st-kp-pt { display: flex; gap: 8px; align-items: baseline; padding: 0 14px 12px 44px; margin-top: -4px; font-size: 13px; line-height: 1.65; color: var(--ink-2); }
 .st-kp-pt > span { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

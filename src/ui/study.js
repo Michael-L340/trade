@@ -194,7 +194,7 @@ export function mountStudy(root, store, opts = {}) {
     shut: new Set(), // 墙上收起来的知识点 id（未归类是 'loose'）
     adding: null, // 'topic' | 主题 id（正在这个主题下加知识点）
     editingNote: null, // 正在改要点的知识点 id
-    renaming: null, // 正在改名的主题或知识点 id；墙上知识点标题里改名的是 'kp:' + id
+    renaming: null, // 正在改名的主题或知识点 id；墙上标题里改名的是 'wall:' + id
   };
   let visible = false;
   let stale = true; // 数据变了还没重画
@@ -524,6 +524,20 @@ export function mountStudy(root, store, opts = {}) {
     return row;
   }
 
+  /** 墙上主题、知识点标题旁边的「改名」「删除」；只读时不显示 */
+  function manageEl(target) {
+    const box = el('span', 'st-manage');
+    if (!canEdit()) return box;
+    const what = target.kind === 'topic' ? '主题' : '';
+    const ren = button('btn link st-mini', '改名', `给${what}「${target.name}」改名`);
+    ren.addEventListener('click', (e) => { e.stopPropagation(); view.renaming = 'wall:' + target.id; render(); });
+    const del = button('btn link st-mini', '删除', `删除${what}「${target.name}」`);
+    del.addEventListener('click', (e) => { e.stopPropagation(); deleteTarget(target); });
+    box.appendChild(ren);
+    box.appendChild(del);
+    return box;
+  }
+
   /** 改名输入框：回车或点别处保存，Esc 取消 */
   function renameInput(target, cls = 'st-rename') {
     const inp = el('input', cls);
@@ -577,7 +591,8 @@ export function mountStudy(root, store, opts = {}) {
     if (!ok) return;
     const undo = target.kind === 'topic' ? store.actions.deleteTopic(target.id) : store.actions.deleteItem(target.id);
     if (!undo) return;
-    view.scope = 'all';
+    const s2 = st(); // 删的是正在看的（或它所在的主题）才回到「全部」；在墙上删别的，留在原地
+    if (view.scope !== 'all' && view.scope !== 'loose' && !s2.topics.some((t) => t.id === view.scope) && !findItem(s2, view.scope)) view.scope = 'all';
     render();
     showToast(`已删除${what}`, { undo });
   }
@@ -815,11 +830,14 @@ export function mountStudy(root, store, opts = {}) {
     const narrow = !!(view.q.trim() || view.symbol || view.kind); // 搜索、筛选时没有符合的知识点就不显示
     const listOf = (id) => shown.filter((c) => c.item === id);
     const groups = el('div', 'st-groups');
-    const topicHead = (color, name, meta) => {
+    const topicHead = (color, name, meta, t) => {
       const h = el('div', 'st-tp-head');
       h.appendChild(swatch(color));
-      h.appendChild(el('h3', null, name));
+      const target = t ? { kind: 'topic', id: t.id, name: t.name } : null;
+      if (target && view.renaming === 'wall:' + t.id) h.appendChild(renameInput(target, 'st-rename st-wall-rename'));
+      else h.appendChild(el('h3', null, name));
       h.appendChild(el('span', 'st-tp-meta', meta));
+      if (target && view.renaming !== 'wall:' + t.id) h.appendChild(manageEl(target));
       return h;
     };
     if (view.scope === 'all') {
@@ -827,7 +845,7 @@ export function mountStudy(root, store, opts = {}) {
         const items = t.items.filter((it) => !narrow || listOf(it.id).length);
         if (narrow && !items.length) continue;
         const sec = el('section', 'st-tp');
-        sec.appendChild(topicHead(topicColor(t), t.name, t.items.length ? `${t.items.length} 个知识点 · ${countTopic(t)} 张` : '还没有知识点'));
+        sec.appendChild(topicHead(topicColor(t), t.name, t.items.length ? `${t.items.length} 个知识点 · ${countTopic(t)} 张` : '还没有知识点', t));
         if (items.length) {
           const grid = el('div', 'st-kps');
           for (const it of items) grid.appendChild(kpEl(it.id, it, listOf(it.id)));
@@ -874,14 +892,11 @@ export function mountStudy(root, store, opts = {}) {
     fold.setAttribute('aria-expanded', String(open));
     fold.appendChild(caretIcon());
     head.appendChild(fold);
-    if (item && view.renaming === 'kp:' + item.id) head.appendChild(renameInput({ kind: 'item', id: item.id, name: item.name }, 'st-rename st-kp-rename'));
+    const target = item ? { kind: 'item', id: item.id, name: item.name } : null;
+    if (target && view.renaming === 'wall:' + item.id) head.appendChild(renameInput(target, 'st-rename st-wall-rename'));
     else {
       head.appendChild(el('h4', null, name));
-      if (item && canEdit() && view.scope !== item.id) { // 点进这个知识点时标题行已经有「改名」
-        const ren = button('btn link st-mini st-kp-ren', '改名', `给「${item.name}」改名`);
-        ren.addEventListener('click', (e) => { e.stopPropagation(); view.renaming = 'kp:' + item.id; render(); });
-        head.appendChild(ren);
-      }
+      if (target && view.scope !== item.id) head.appendChild(manageEl(target)); // 点进这个知识点时标题行已经有「改名」「删除」
     }
     head.appendChild(el('span', 'st-kp-n', list.length + ' 张'));
     if (canEdit()) {
